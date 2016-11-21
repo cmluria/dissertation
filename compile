@@ -1,0 +1,9 @@
+# remove aux
+for i in `find . -name "*.aux"`; do rm $i; done
+
+#
+pdflatex main
+bibtex main
+pdflatex main
+pdflatex main
+

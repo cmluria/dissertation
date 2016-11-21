@@ -1,0 +1,643 @@
+---
+title: "SeaIce_Analysis_Notebook"
+author: "Cat Luria"
+date: "August 31, 2016"
+output: 
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+
+---
+\newpage
+```{r, echo=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+---
+
+First, load all the necessary packages.
+
+```{r libraries, echo=FALSE, warning=FALSE}
+#libraries
+library(data.table)
+library(ggplot2)
+# library(wesanderson)
+library(scales)
+library(reshape2)
+library(RColorBrewer)
+# library(gdata)
+library(plyr)
+# library(grid)
+# library(agricolae)
+# library(devtools)
+# library(ellipse)
+# library(multtest)
+# library(zoo)
+# library(glmnet)
+# library(randomForest)
+# library(caret)
+# library(ggrepel)
+library(gridExtra)
+```
+
+```{r get_data}
+
+setwd("/Users/cmluria/Documents/Documents/Thesis Chapters/Sea Ice")
+
+meta <- read.delim("MasterData.csv", sep=",")
+
+```
+
+
+
+```{r setup_for_plots}
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
+agg_data <- ddply(meta, c("Experiment", "MonthYear", "Month", "Day", "Treatment"), summarise,
+               N.leu = length(Production),
+               mean.leu = mean(Production),
+               sd.leu   = sd(Production),
+               se.leu   = sd.leu / sqrt(N.leu),
+               N.ba = length(SG_All),
+               mean.ba = mean(SG_All),
+               sd.ba   = sd(SG_All),
+               se.ba   = sd.ba / sqrt(N.ba),
+                 N.chl = length(Chlorophyll),
+               mean.chl = mean(Chlorophyll),
+               sd.chl   = sd(Chlorophyll),
+               se.chl   = sd.chl / sqrt(N.chl),
+                N.af = length(AF_All),
+               mean.af = mean(AF_All),
+               sd.af   = sd(AF_All),
+               se.af   = sd.af / sqrt(N.af),
+               N.nano = length(Accuri_AF_P6_Nanophyto),
+               mean.nano = mean(Accuri_AF_P6_Nanophyto),
+               sd.nano   = sd(Accuri_AF_P6_Nanophyto),
+               se.nano   = sd.nano / sqrt(N.nano))
+
+agg_data$MonthYear <- as.factor(agg_data$MonthYear)
+agg_data$MonthYear = factor(agg_data$MonthYear,
+                               levels=c("Feb_2012", 
+                                        "Oct_2012","Nov_2012", 
+                                        "Oct_2013", "Nov_2013"))
+
+agg_data$Month <- as.factor(agg_data$Month)
+agg_data$Month = factor(agg_data$Month,
+                               levels=c("February", 
+                                        "October","November"))
+
+```
+
+# Experiment plots
+
+```{r Fall2012_experiments}
+
+agg_data_treat <- agg_data[which(agg_data$Treatment=="Control" | agg_data$Treatment=="Filt" | agg_data$Treatment=="Unfilt" ),]
+
+leu <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2" | agg_data_treat$Experiment=="3" ),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("BP (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.leu <- leu + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+ba <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2" | agg_data_treat$Experiment=="3" ),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(5e5,1e6),
+                       labels=c("5e5","1e6")) +
+        ylab(expression(paste("BA (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.ba <- ba + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+nano <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2" | agg_data_treat$Experiment=="3" ),], aes(x=Day, y=mean.nano, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.nano-se.nano, ymax=mean.nano+se.nano), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+        ylab(expression(paste("Phytoplankton (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.nano <- nano + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+panel.nano <- ggplot_gtable(ggplot_build(facet.nano))
+panel.leu <- ggplot_gtable(ggplot_build(facet.leu))
+panel.ba <- ggplot_gtable(ggplot_build(facet.ba))
+
+maxWidth1 = grid::unit.pmax(panel.nano$widths[2:3], 
+                     panel.leu$widths[2:3],
+                     panel.ba$widths[2:3])
+
+panel.leu$widths[2:3] <- maxWidth1
+panel.nano$widths[2:3] <- maxWidth1
+panel.ba$widths[2:3] <- maxWidth1
+
+
+grid.arrange(panel.nano, panel.ba, panel.leu, heights = c(2, 2, 2), bottom="Day")
+
+
+
+```
+
+
+
+
+
+
+```{r Fall2013_experiments}
+
+leu <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4" | agg_data_treat$Experiment=="5" ),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("BP (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.leu <- leu + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+ba <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4" | agg_data_treat$Experiment=="5" ),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(0,1e6,2e6,3e6),
+                       labels=c("0","1e6","2e6","3e6")) +
+        ylab(expression(paste("BA (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.ba <- ba + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+chl <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4" | agg_data_treat$Experiment=="5" ),], aes(x=Day, y=mean.chl, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.chl-se.chl, ymax=mean.chl+se.chl), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Chl ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.chl <- chl + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+panel.chl <- ggplot_gtable(ggplot_build(facet.chl))
+panel.leu <- ggplot_gtable(ggplot_build(facet.leu))
+panel.ba <- ggplot_gtable(ggplot_build(facet.ba))
+
+maxWidth1 = grid::unit.pmax(panel.chl$widths[2:3], 
+                     panel.leu$widths[2:3],
+                     panel.ba$widths[2:3])
+
+panel.leu$widths[2:3] <- maxWidth1
+panel.chl$widths[2:3] <- maxWidth1
+panel.ba$widths[2:3] <- maxWidth1
+
+
+grid.arrange(panel.chl, panel.ba, panel.leu, heights = c(2, 2, 2), bottom="Day")
+
+
+
+```
+
+
+```{r initial_sea_ice_values}
+
+agg_data_init <- agg_data[which(agg_data$Treatment=="Water" | agg_data$Treatment=="Ice" | agg_data$Treatment=="Filt Ice"),]
+
+agg_data_init$Treatment <- as.factor(agg_data_init$Treatment)
+agg_data_init$Treatment = factor(agg_data_init$Treatment,
+                               levels=c("Water", 
+                                        "Filt Ice","Ice"))
+
+
+leu.all <- ggplot(agg_data_init[which(agg_data_init$Experiment!="1"),],
+                  aes(x=MonthYear, y=mean.leu, fill=Treatment)) +
+                  geom_bar(stat="identity",position=position_dodge()) +
+          scale_fill_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                            labels=c("Water Column (6-10m)", "Filtered Sea Ice", 
+                                  "Whole Sea Ice")) +
+  scale_x_discrete(breaks=c("Oct_2012","Nov_2012","Oct_2013","Nov_2013"),
+                    labels=c("October 2012","November 2012",
+                             "October 2013","November 2013")) +
+  ylab(expression(paste("Production (pmol ", L^{-1}, hour^{-1},")"))) +
+          theme_classic() +
+          theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+          panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+          axis.text.y=element_text(angle=90, hjust=0.5),
+          legend.position="none",
+          axis.title.x = element_blank())
+
+ba.2012 <- ggplot(agg_data_init[which(agg_data_init$Experiment!="1" &
+                             agg_data_init$Experiment!="4" &
+                             agg_data_init$Experiment!="5"),], 
+       aes(x=MonthYear, y=mean.ba, fill=Treatment)) +
+         geom_bar(stat="identity",position=position_dodge()) +
+   scale_x_discrete(breaks=c("Oct_2012","Nov_2012"),
+                    labels=c("October 2012","November 2012")) +
+  scale_fill_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                            labels=c("Water Column (6-10m)", "Filtered Sea Ice", 
+                                  "Whole Sea Ice")) +
+  ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+         theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        legend.position="none",
+        axis.title.x = element_blank())
+
+ba.2013 <- ggplot(agg_data_init[which(agg_data_init$Experiment!="1" &
+                             agg_data_init$Experiment!="2" &
+                             agg_data_init$Experiment!="3"),], 
+                  aes(x=MonthYear, y=mean.ba, fill=Treatment)) +
+           geom_bar(stat="identity",position=position_dodge()) +
+  scale_fill_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                            labels=c("Water Column (6-10m)", "Filtered Sea Ice", 
+                                  "Whole Sea Ice")) +
+   scale_x_discrete(breaks=c("Oct_2013","Nov_2013"),
+                    labels=c("October 2013","November 2013")) +
+  ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+           theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        legend.position="none",
+        axis.title.x = element_blank())
+
+af.2012 <- ggplot(agg_data_init[which(agg_data_init$Experiment!="1" &
+                             agg_data_init$Experiment!="4" &
+                             agg_data_init$Experiment!="5"),], aes(x=MonthYear,      y=mean.nano, fill=Treatment)) +
+    geom_bar(stat="identity",position=position_dodge()) +
+   ylab(expression(paste("Phytoplankton abundance (", ml^{-1}, ")"))) +
+   scale_x_discrete(breaks=c("Oct_2012","Nov_2012"),
+                    labels=c("October 2012","November 2012")) +
+  scale_fill_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                            labels=c("Water Column (6-10m)", "Filtered Sea Ice", 
+                                  "Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        legend.position="none",
+        axis.title.x = element_blank())
+
+chl.2013 <- ggplot(agg_data_init[which(agg_data_init$Experiment!="1" &
+                             agg_data_init$Experiment!="2" &
+                             agg_data_init$Experiment!="3"),], 
+                   aes(x=MonthYear, y=mean.chl, fill=Treatment)) +
+  geom_bar(stat="identity",position=position_dodge()) +
+ scale_fill_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                            labels=c("Water Column (6-10m)", "Filtered Sea Ice", 
+                                  "Whole Sea Ice")) +
+   ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+   scale_x_discrete(breaks=c("Oct_2013","Nov_2013"),
+                    labels=c("October 2013","November 2013")) +
+  theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        legend.position="none",
+        axis.title.x = element_blank())
+
+lay <- rbind(c(1,2),
+             c(3,4),
+             c(5,5))
+
+
+grid.arrange(af.2012, chl.2013, ba.2012, ba.2013, leu.all, 
+             layout_matrix=lay)
+
+```
+
+# Basic statistics
+
+
+```{r linear_regression}
+
+
+
+```
+
+
+
+```{r Fall2012_experiments_no_facet}
+
+agg_data_treat <- agg_data[which(agg_data$Treatment=="Control" | agg_data$Treatment=="Filt" | agg_data$Treatment=="Unfilt" ),]
+
+leu.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2"),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Production (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+leu.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="3"),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Production (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.leu <- leu + facet_grid(.~MonthYear, scales="free")
+
+# =================================================================================
+
+ba.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2"),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(600000,800000,1000000,1200000),
+                       labels=c("6e5","8e5","1e6","1.2e6")) +
+        ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+ba.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="3"),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(200000,300000,400000,500000),
+                       labels=c("2e5","3e5","4e6","5e5")) +
+        ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+# =================================================================================
+
+nano.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="2"),], aes(x=Day, y=mean.nano, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.nano-se.nano, ymax=mean.nano+se.nano), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+        ylab(expression(paste("Phytoplankton abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+nano.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="3" ),], aes(x=Day, y=mean.nano, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.nano-se.nano, ymax=mean.nano+se.nano), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+        ylab(expression(paste("Phytoplankton abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+# ==============================================================================
+
+
+grid.arrange(nano.oct, nano.nov, ba.oct, ba.nov, leu.oct, leu.nov)
+
+
+
+```
+
+
+```{r Fall2013_experiments_no_facet}
+
+agg_data_treat <- agg_data[which(agg_data$Treatment=="Control" | agg_data$Treatment=="Filt" | agg_data$Treatment=="Unfilt" ),]
+
+leu.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4"),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Production (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+leu.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="5"),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Production (pmol ", L^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+# ==============================================================================
+
+ba.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4"),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(0,1000000,2000000,3000000),
+                       labels=c("0","1e6","2e6","3e6")) +
+        ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+ba.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="5"),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(100000,200000,300000,400000),
+                       labels=c("1e5","2e5","3e5","4e5")) +
+        ylab(expression(paste("Bacterial abundance (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+# ==============================================================================
+
+chl.oct <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="4"),], aes(x=Day, y=mean.chl, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.chl-se.chl, ymax=mean.chl+se.chl), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+        ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+chl.nov <- ggplot(agg_data_treat[which(agg_data_treat$Experiment=="5" ),], aes(x=Day, y=mean.chl, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.chl-se.chl, ymax=mean.chl+se.chl), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  " ,l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                       labels=c("Control","Filtered Sea Ice","Whole Sea Ice")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+# ==============================================================================
+
+
+grid.arrange(chl.oct, chl.nov, ba.oct, ba.nov, leu.oct, leu.nov)
+
+
+
+```

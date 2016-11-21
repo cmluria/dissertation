@@ -1,0 +1,340 @@
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[final,letter,oneside,
+12pt, % The default document font size, options: 10pt, 11pt, 12pt
+% oneside, % Two side (alternating margins) for binding by default, uncomment to switch to one side
+%english, % ngerman for German
+doublespacing, % Single line spacing, alternatives: onehalfspacing or doublespacing
+%draft, % Uncomment to enable draft mode (no pictures, no links, overfull hboxes indicated)
+%nolistspacing, % If the document is onehalfspacing or doublespacing, uncomment this to set spacing in lists to single
+%liststotoc, % Uncomment to add the list of figures/tables/etc to the table of contents
+%toctotoc, % Uncomment to add the main table of contents to the table of contents
+%parskip, % Uncomment to add space between paragraphs
+% nohyperref, % Uncomment to not load the hyperref package
+%headsepline, % Uncomment to get a line under the header
+]{brownthesis} % The class file specifying the document structure
+
+\usepackage[utf8]{inputenc} % Required for inputting international characters
+\usepackage[T1]{fontenc} % Output font encoding for international characters
+\usepackage{textcomp}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks = true,
+    citecolor = {blue},
+    bookmarksopen=true,
+    bookmarksnumbered=true
+}
+\usepackage{bookmark}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{mhchem}
+\usepackage{lmodern}
+\usepackage{amssymb,amsmath}
+\usepackage{ifxetex,ifluatex}
+\usepackage{titling}
+\usepackage{fixltx2e} % provides \textsubscript
+\usepackage{siunitx}
+\sisetup{range-phrase=--}
+\sisetup{range-units=single}
+
+\usepackage[round]{natbib}
+\bibliographystyle{frontiersin}
+
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{pdflscape}
+\usepackage[none]{hyphenat}
+\usepackage[USenglish]{babel}
+\usepackage{titlesec}
+\usepackage{palatino} % Use the Palatino font by default
+\usepackage{afterpage}
+
+\usepackage{parskip}
+\setlength{\parindent}{15pt}
+
+\sloppy
+%
+
+
+\usepackage{geometry}
+\geometry{reset, letterpaper, left=1.5in, right=1in,height=9in, width=6in,top=1in, bottom=1in}
+
+\usepackage{caption}
+\captionsetup{width=0.9\textwidth}
+ 
+
+%----------------------------------------------------------------------------------------
+%	EXTRA DEFINITONS
+%----------------------------------------------------------------------------------------
+
+\titleformat{\chapter}[display]
+{\normalfont\Large\filcenter\bfseries}
+{\vspace*{\fill}
+ \titlerule[1pt]%
+ \vspace{1pt}%
+ \titlerule
+ \vspace{1pc}%
+ \LARGE\MakeUppercase{\chaptertitlename}~\thechapter}
+{1pc}
+{\titlerule\Huge}
+[\vspace*{\fill}\newpage]
+
+\titlespacing*{\chapter}{0pt}{0pt}{0pt}
+
+\titleformat{name=\chapter,numberless}[display]
+{\normalfont\Large\filcenter\bfseries}
+{}
+{0pt}
+{\titlerule[1pt]\Huge}
+[\titlerule\vspace{2pc}]
+
+
+\newcommand\nomarkfootnote[1]{%
+  \begingroup
+  \renewcommand\thefootnote{}\footnote{#1}%
+  \addtocounter{footnote}{-1}%
+  \endgroup
+}
+
+\newcommand{\chapterdisclaimer}[1]{
+	\clearpage
+	\vspace*{\fill}
+	\titlerule
+	\begin{center}
+	\begin{minipage}{.9\textwidth}
+	\textsf{{#1}}
+	\end{minipage}
+	\end{center}
+	\medskip
+	\hrule 
+	\vfill % equivalent to \vspace{\fill}
+	\clearpage
+	}
+
+\newenvironment{dedication}
+  {
+   \clearpage           % we want a new page         
+   \thispagestyle{empty}% no header and footer
+   \vspace*{\stretch{1.5}}% some space at the top
+   \itshape             % the text is in italics
+   \large								% large
+   \raggedleft          % flush to the right margin
+  }
+  {\par % end the paragraph
+   \vspace{\stretch{2}} % space at bottom 
+   \clearpage           % finish off the page
+  }
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{0}
+
+\newcommand{\code}{\texttt}
+
+\DeclareSIUnit\Molar{\textsc{M}}
+
+%----------------------------------------------------------------------------------------
+%	MARGIN SETTINGS
+%----------------------------------------------------------------------------------------
+
+
+%----------------------------------------------------------------------------------------
+%	THESIS INFORMATION
+%----------------------------------------------------------------------------------------
+
+\title{\Large Drivers of Microbial Community Assembly and Activity in Antarctic Coastal Waters} % Your thesis title, this is used in the title and abstract, print it elsewhere with \ttitle
+\author{Catherine \textsc{Luria}} % Your name, this is used in the title page and abstract, print it elsewhere with \authorname
+\principaladvisor{Casey \textsc{Dunn}} % Your supervisor's name, this is used in the title page, print it elsewhere with \supname
+\reader{Jeremy Rich}
+\reader{Hugh Ducklow} % Your examiner's name, this is not currently used anywhere in the
+\reader{Linda Amaral-Zettler}
+
+\hypersetup{pdftitle=\@title} % Set the PDF's title to your title
+\hypersetup{pdfauthor=\@author} % Set the PDF's author to your name
+
+\begin{document}
+
+\frontmatter % Use roman page numbering style (i, ii, iii, iv...) for the pre-content pages
+
+\pagestyle{plain} % Default to the plain heading style until the thesis style is called for the body content
+
+%----------------------------------------------------------------------------------------
+%	TITLE PAGE
+%----------------------------------------------------------------------------------------
+
+%----------------------------------------------------------------------------------------
+%	DECLARATION PAGE
+%----------------------------------------------------------------------------------------
+
+%\begin{declaration}
+%\addchaptertocentry{\authorshipname}
+%
+%\noindent I, \authorname, declare that this thesis titled, \enquote{\ttitle} and the work presented in it are my own. I confirm that:
+%
+%\begin{itemize} 
+%\item This work was done wholly or mainly while in candidature for a research degree at this University.
+%\item Where any part of this thesis has previously been submitted for a degree or any other qualification at this University or any other institution, this has been clearly stated.
+%\item Where I have consulted the published work of others, this is always clearly attributed.
+%\item Where I have quoted from the work of others, the source is always given. With the exception of such quotations, this thesis is entirely my own work.
+%\item I have acknowledged all main sources of help.
+%\item Where the thesis is based on work done by myself jointly with others, I have made clear exactly what was done by others and what I have contributed myself.\\
+%\end{itemize}
+% 
+%\noindent Signed:\\
+%\rule[0.5em]{25em}{0.5pt} % This prints a line for the signature
+% 
+%\noindent Date:\\
+%\rule[0.5em]{25em}{0.5pt} % This prints a line to write the date
+%\end{declaration}
+%
+\cleardoublepage
+
+\beforepreface
+
+%----------------------------------------------------------------------------------------
+%	QUOTATION PAGE
+%----------------------------------------------------------------------------------------
+
+%\vspace*{0.2\textheight}
+
+%\quotation{Help me Tom Cruise!}\bigbreak
+
+%\hfill - Ricky Bobby
+
+%----------------------------------------------------------------------------------------
+%	ABSTRACT PAGE
+%----------------------------------------------------------------------------------------
+
+\prefacesection{Abstract}
+Oceans cover 70\% of the Earth’s surface and each liter of seawater contains billions of microbes. These microbes account for most of the biomass in the oceans, driving biogeochemical cycles that govern marine food webs and the global carbon cycle. While recent advances in molecular biology have greatly increased our understanding of marine microbial assemblages, the ocean remains an undersampled and poorly understood environment. This is especially true of remote Antarctic waters where microbes reflect and influence strong seasonal, interannual and climate change-driven ecosystem variability. This research uses small subunit (SSU) rRNA gene amplicon sequencing to examine microbial diversity across different temporal and spatial scales in the coastal waters west of the Antarctic Peninsula (WAP), with a focus on phytoplankton-derived dissolved organic matter (DOM) as a driver of bacterial activity and community structure. Research findings were interpreted using ecological theory, particularly community assembly rules. A survey of microbial diversity across all three domains of life revealed similar bacterial communities in winter surface waters and summer deep waters, habitats that share the common feature of reduced light and primary production. A fine-scale analysis of WAP bacterial succession during the winter-to-summer transition found increased bacterial production, decreased richness, and changes in community composition concurrent with a major phytoplankton bloom. Expanding this analysis to multiple years suggested that interannual variability in large-scale climatic forces may indirectly structure bacterial communities through phytoplankton dynamics. DOM amendments in the form of phytoplankton exudates altered bacterial production, abundance, and community composition in mesocosm experiments, demonstrating the significance of phytoplankton-derived carbon. Likewise, DOM-rich filtered sea ice amendments enhanced bacterial production. While most results emphasized the importance of environmental forcing and niche-based processes in community assembly, priority effects were evident, suggesting that interannual variability in the timing of phytoplankton blooms is critical to bacterial community responses. This research advances our understanding of the role of bacterial communities in the WAP and informs a growing body of ecological theory pertaining to microbes. 
+
+
+
+%----------------------------------------------------------------------------------------
+%	VITA
+%----------------------------------------------------------------------------------------
+\prefacesection{Curriculum Vitae}
+\singlespacing
+\input{cv}
+
+%----------------------------------------------------------------------------------------
+%	PREFACE
+%----------------------------------------------------------------------------------------
+%\prefacesection{Preface}
+%       This thesis tells you all you need to know about...
+
+
+%----------------------------------------------------------------------------------------
+%	ACKNOWLEDGEMENTS
+%----------------------------------------------------------------------------------------
+\doublespacing
+\prefacesection{Acknowledgements}
+
+I owe so many thanks to the people who have helped me become a scientist and supported me each step of the way.
+ 
+Thanks to:
+ 
+… Jeremy Rich, my primary advisor over the years, was endlessly patient and always pushed me, sometimes to my frustration, to defend and define my work, making me a better scientists and resulting in a stronger project.
+ 
+… Linda Amaral-Zettler, Hugh Ducklow, and Jeremy Rich were all principal investigators for one or more sections of this dissertation. Hugh introduced me to Antarctica and my thesis research was grounded in the valuable experience (and fond memories) that I gained working with Hugh and the Palmer LTER program. My work benefited from Linda’s careful oversight. Together, Linda, Jeremy, and Hugh conceived and led parts of this study and my work was made possible through their input and guidance.
+ 
+… Casey Dunn graciously stepped in as my advisor a year ago and warmly welcomed me to his lab. Casey, along with EEB, ensured that I had the support and mentorship needed to complete my degree. Other faculty were impromptu mentors along the way, especially Sohini Ramachandran and Heather Leslie. I appreciate the work that EEB faculty and administrative staff do every day to foster learning and professional development. 
+ 
+… Many others contributed to my work here in New England. Dan Repeta got me excited about phytoplankton exudates and generously gave his time and resources to get me started on that path. Andrew Rhyne helped me to grow and harvest hundreds of liters of diatoms, no easy task. Nuria Fernandez Gonzalez, Susan Huse, Annaliese Jones, Elizabeth McCliment, Leslie Murphy, and Naomi Shelton provided valuable laboratory and bioinformatics support.
+ 
+… And many more contributed to my work in the field: Jamie Collins, Sharon Grim, Sarah Laperriere, Kristin Myers, Sean O’Neill, Monica Stegman, Stefanie Strebel, Natasja van Gestel, Sebastian Vivancos, Madelyne Willis, Kathleen Woods, and other members of B045 from before my time. Matthew Erickson taught me everything I know about flow cytometry and helped me through the logistics of multiple field seasons. The United States Antarctic Program, including the staff at Palmer Station and aboard the Lawrence M. Gould, especially Carolyn Lipke, enabled science to happen each and every day.
+ 
+… My parents instilled in me curiosity and a love of education and allowed me the figurative freedom to pursue my own intellectual development. My siblings have been a source of unconditional love through this process. My in-laws sent blessings and encouragement every single week. I’m also so grateful to the family I’ve made here in Providence: Cat, Leila, Melinda, Michelle, Michael, Joanne, Justin, Rebecca, and Rosemary. Michelle, I’m so glad you responded to that first email. I am blessed to have such wonderful friends and my family is blessed to have such wonderful aunties, uncles, and grandparents.
+ 
+… Last, but perhaps foremost, my husband, Nikhil Murgai. He has been endlessly supportive, going to the ends of the Earth (literally!) for my degree. From carboys to C++, I can’t imagine this thesis without his contributions to my life and my research.
+ 
+My work was supported by the following National Science Foundation grants: NSF DEB-0717390 and ANT-1142114 to Linda Amaral-Zettler, OPP-0217282, OPP-0823101, and PLR-1440435 to Hugh Ducklow, and ANT-1141993 to Jeremy Rich. In addition, my work benefited from a Brown Department of Ecology and Evolutionary Biology Dissertation Improvement Grant and free computation resources through the AWS Educate program and the Github Student Developer Pack. I was generously supported by the Brown-MBL program, the Brown Graduate School, and the Brown Department of Ecology and Evolutionary Biology.
+
+
+
+
+%----------------------------------------------------------------------------------------
+%	DEDICATION
+%----------------------------------------------------------------------------------------
+\begin{dedication}
+For\\
+Nikhil, who helped endlessly,\\
+and\\
+Zev, who helped not at all.
+\end{dedication}
+
+% \clearpage
+% \vspace*{\fill}
+% \begin{minipage}{.6\textwidth}
+% \begin{center}
+% \begin{large}
+% For\ldots\\
+% Nikhil, who was endlessly helpful,\\
+% and\\
+% Zev, who was no help at all.
+% \end{large}
+% \end{center}
+% \end{minipage}
+% \vfill % equivalent to \vspace{\fill}
+% \clearpage
+
+
+\afterpreface
+
+%----------------------------------------------------------------------------------------
+%	LIST OF CONTENTS/FIGURES/TABLES PAGES
+%----------------------------------------------------------------------------------------
+
+%\tableofcontents % Prints the main table of contents
+%
+%\listoffigures % Prints the list of figures
+%
+%\listoftables % Prints the list of tables
+%
+
+
+%----------------------------------------------------------------------------------------
+%	THESIS CONTENT - CHAPTERS
+%----------------------------------------------------------------------------------------
+
+\mainmatter % Begin numeric (1,2,3...) page numbering
+\setcounter{secnumdepth}{2}
+\doublespace
+
+% Include the chapters of the thesis as separate files from the Chapters folder
+% Uncomment the lines as you write the chapters
+\include{Chapter_1_Introduction/body}
+\include{Chapter_2_MIRADA/body}
+\include{Chapter_3_SWI/body} 
+\include{Chapter_4_DOM/body}
+\include{Chapter_5_LTER/body} 
+\include{Chapter_6_SeaIce/body} 
+
+%----------------------------------------------------------------------------------------
+%	THESIS CONTENT - APPENDICES
+%----------------------------------------------------------------------------------------
+
+\appendix % Cue to tell LaTeX that the following "chapters" are Appendices
+
+% Include the appendices of the thesis as separate files from the Appendices folder
+% Uncomment the lines as you write the Appendices
+
+%\include{Appendices/AppendixA}
+%\include{Appendices/AppendixB}
+%\include{Appendices/AppendixC}
+
+%----------------------------------------------------------------------------------------
+%	BIBLIOGRAPHY
+%----------------------------------------------------------------------------------------
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliography}
+\bibliography{BIB}
+
+%----------------------------------------------------------------------------------------
+
+\end{document}  

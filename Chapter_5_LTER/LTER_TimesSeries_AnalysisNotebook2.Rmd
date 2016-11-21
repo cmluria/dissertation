@@ -1,0 +1,3402 @@
+---
+title: "LTER Time Series Analysis 2"
+author: "Cat Luria"
+date: "August 10, 2016"
+output:
+  pdf_document:
+    fig_caption: yes
+    keep_tex: yes
+    number_sections: yes
+    toc: yes
+  html_document:
+    toc: yes
+---
+\newpage
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+---
+
+# Getting started in R
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+
+#libraries
+library(data.table)
+library(BiodiversityR)
+library(vegan)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(plyr)
+library(scales)
+library(devtools)
+library(iNEXT)
+library(phyloseq)
+library(edgeR)
+library(caret)
+library(grid)
+library(gridExtra)
+library(wesanderson)
+library(dynlm)
+library(MASS)
+library(zoo)
+library(car)
+
+
+```
+
+```{r multiplot_function, echo=FALSE}
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+# Import main OTU table and ancillary data
+
+```{r get_data, echo=FALSE}
+
+setwd("/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series")
+
+otutable_bac <- fread('complete_16S_dataset/cdout_LTER_bac_higher_threshold/otu_table_mc2_LTER_even40000_bac_from_biom.txt', skip=1)
+
+otutable_bac_unrar <- fread('complete_16S_dataset/cdout_LTER_bac_higher_threshold/otu_table_mc2_w_tax_no_pynast_failures_min_LTER_chlor_gone_higher_thresh_from_biom.txt', skip=1)
+
+# ============== manipulate rarefied OTU table ==================
+#convert the otu table to a data frame
+otutable_bac <- as.data.frame(otutable_bac)
+#grab the columns with data
+otutable_bac_samples <- otutable_bac[,(2:48)]
+#transpose
+otutable_bac_samples_t <- t(otutable_bac_samples)
+#use column 1 from original table as column names in new table
+colnames(otutable_bac_samples_t) <- otutable_bac[,1]
+
+new_otutable_bac_samples_t <- 
+  otutable_bac_samples_t[order(row.names(otutable_bac_samples_t)), ]
+otutable_bac_samples_t <- as.data.frame(new_otutable_bac_samples_t)
+
+# ============== manipulate unrarefied OTU table ===============
+#convert the otu table to a data frame
+otutable_bac_unrar <- as.data.frame(otutable_bac_unrar)
+#grab the columns with data
+otutable_bac_unrar_samples <- otutable_bac_unrar[,(2:48)]
+#transpose
+otutable_bac_unrar_samples_t <- t(otutable_bac_unrar_samples)
+#use column 1 from original table as column names in new table
+colnames(otutable_bac_unrar_samples_t) <- otutable_bac_unrar[,1]
+
+new_otutable_bac_unrar_samples_t <- 
+  otutable_bac_unrar_samples_t[order(row.names(otutable_bac_unrar_samples_t)), ]
+otutable_bac_unrar_samples_t <- as.data.frame(new_otutable_bac_unrar_samples_t)
+
+
+# ================ get metadata ========================
+
+meta <- fread('metadata_2016Aug11.txt')
+idx_meta <- order(meta$'SampleID', decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+
+
+```
+
+
+
+
+
+# Observed Richness
+
+```{r calculate_richness, echo=FALSE}
+
+richness <- diversityresult(otutable_bac_samples_t, 
+                              index='richness', method='s')
+richness_meta <- cbind(meta_sorted, richness)
+
+richness_meta$Month = factor(richness_meta$Month,
+                               levels=c("Oct","Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+summary(richness_meta$richness)
+```
+
+## Estimated richness
+
+```{r run_chao_jost_2, eval=TRUE, echo=FALSE}
+
+coverage2 <- iNEXT(otutable_bac_unrar_samples, q = 0, datatype = "abundance", size = NULL, endpoint = NULL, knots = 10, se = TRUE, nboot = 1)
+
+coverage2_df <- data.frame(coverage2$AsyEst)
+coverage2_df <- dcast(coverage2_df, Var1 ~ Var2 + Var3)
+
+coverage2_df <- merge(coverage2_df,coverage2$DataInfo,by.x = 'Var1', by.y = 'row.names',all.x = TRUE)
+
+coverage2_df_sorted <- coverage2_df[order(as.character(coverage2_df$Var1)),]
+colnames(coverage2_df_sorted) <- make.names(colnames(coverage2_df_sorted), unique=TRUE)
+summary(lm(Species.richness_Estimator~n, data = coverage2_df_sorted))
+
+summary(lm(richness_meta$richness~coverage2_df_sorted$Species.richness_Estimator))
+
+```
+
+
+## Richness statistics
+
+```{r anova_obs_richness_month, echo=FALSE, include=FALSE, eval=FALSE}
+
+aov.obs.richness.month= aov(richness~Month,data=richness_meta)
+
+summary(aov.obs.richness.month)
+pvalue.obs <- summary(aov.obs.richness.month)[[1]][, 5][1]
+
+h.obs <- TukeyHSD(aov.obs.richness.month, "Month")
+h.obs
+
+```
+
+
+```{r richness_regression}
+
+model <- dynlm(formula = richness ~ Serial_day + DayLength + 
+                 Leucine + Chlorophyll + Phaeopigment, data = richness_meta)
+steps3 <- stepAIC(model, direction="both")
+steps3$anova
+summary(steps3)
+vif(steps3)
+
+
+```
+
+## Figure 5. Richness
+
+```{r plot_richness_by_date, echo=FALSE, fig.cap="Bacterial richness (observed OTUs)."}
+
+g.rich <- ggplot(richness_meta, aes(x=Serial_day, y=richness)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    xlab("Date") + 
+    ylab("Number of OTUs") +
+    theme_classic() +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.rich <- g.rich + facet_grid(.~Season)
+
+facet.rich
+
+```
+
+
+```{r plot_richness_by_month, echo=FALSE, fig.cap="Bacterial richness (observed OTUs), all seasons pooled by month.", eval=FALSE}
+
+lm <- lm(meta_sorted$Leucine~meta_sorted$Chlorophyll)
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73")
+
+p <- ggplot(data = richness_meta,
+      aes(x=Date, y=richness, fill=Season)) +
+      #geom_boxplot(position=position_dodge(1)) +
+      #scale_fill_manual(values=c("#E69F00", "#56B4E9", "#D55E00","#009E73")) +
+      #stat_summary(fun.y=mean, geom="point", shape=5, size=4) +
+      scale_x_discrete(name="") +
+      scale_y_continuous(name="Richness (observed OTUs)") +
+      theme_classic() +
+        theme(text = element_text(size=11),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=11),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+p + facet_grid(.~Month)
+
+```
+
+
+# Top OTUs
+
+```{r select_important_OTUs, echo=FALSE}
+
+# =================== set up data =======================
+
+otu_table_mc2_LTER_even40000_bac_from_biom <- read.delim("complete_16S_dataset/cdout_LTER_bac_higher_threshold/otu_table_mc2_LTER_even40000_bac_from_biom.txt", stringsAsFactors = FALSE, skip=1)
+
+otu <- t(otu_table_mc2_LTER_even40000_bac_from_biom[2:48])
+colnames(otu) <- otu_table_mc2_LTER_even40000_bac_from_biom$X.OTU.ID
+
+# ============ convert to relative abundance===============
+
+relative <- function(data){
+  csum <- rowSums(data)
+  sweep(data,1,csum,"/") 
+}
+
+otu.relative <- relative(otu)
+
+# =============== threshold function min ========================
+## selects a threshold based on minimum relative abundance
+thresh_filter <- function(v,t,c){
+  table(v >= t)['TRUE'] >=c
+}
+
+thresh_select <- function(data,threshold=433, cols=3){
+  which(apply(data,2, thresh_filter,threshold,cols))
+}
+
+
+# =============== threshold function max ========================
+## selects a threshold based on maximum relative abundance
+
+thresh_filter_max <- function(v,t,c){
+  table(v >= t)['TRUE'] <=c
+}
+
+thresh_select_max <- function(data,threshold=433, cols=3){
+  which(apply(data,2, thresh_filter_max,threshold,cols))
+}
+
+
+# =============== filter out low abundance OTUs ====================
+
+# get index (row number) where condition matches
+idx_abundant <- thresh_select(otu.relative, 0.01, 2)
+# select the indexed rows
+otu.relative.abundant <- otu.relative[,idx_abundant]
+dim(otu.relative.abundant)
+
+# try to add taxonomy
+
+otu.relative.abundant.t <- t(otu.relative.abundant)
+
+taxonomy <- cbind(otu_table_mc2_LTER_even40000_bac_from_biom$X.OTU.ID, 
+                  otu_table_mc2_LTER_even40000_bac_from_biom$taxonomy)
+colnames(taxonomy) <- c("OTU","taxonomy")
+
+tax <- merge(otu.relative.abundant.t, taxonomy, by.x=0, by.y="OTU")
+names(tax$Row.names) <- "OTU"
+
+top.otu.list <- tax[,-(2:48)]
+
+```
+                          
+                           
+Checking to see if the same OTUs make the list as in SWI and DOM datasets.
+
+--644016 is Colwellia in DOM
+--789831 is Rhodobacter in DOM
+--812461 is Rhodobacter in DOM
+--970344 is Oceanospirillaceae in DOM
+--884345 is Oceanospirllales in DOM
+--907828 is Polaribacter in DOM
+--1016465 is Pelagibacter in DOM
+--838668 is Pelagibacter in DOM
+
+## Abundance and persistence
+
+```{r}
+
+idx_abundant <- thresh_select_max(otu, 1, 0.25*47)
+# select the indexed rows
+otu.abundant <- otu[,idx_abundant]
+dim(otu.abundant)
+
+row <- as.data.frame(rowSums(otu.abundant))
+do.call(sum, row) / (40000*47)
+
+```
+
+## Figure 7. Seasonal OTUs
+
+
+```{r linear_model_for_seasonality_top100_logit_transformed, echo=FALSE}
+
+nzv <- nearZeroVar(otu.relative, saveMetrics = TRUE)
+
+filtered <- otu.relative[,nzv$nzv==FALSE]
+dim(filtered)
+otu.relative.nzv <- as.data.frame(filtered[order(row.names(filtered)),])
+
+# grabbing top 100 OTUs based on average abundance and then logit transforming
+
+otu.relative.t <- t(otu.relative.nzv)
+otu.relative.t.df <- as.data.frame(otu.relative.t)
+otu.relative.t.df$average <- apply(otu.relative.t.df, 1, mean)
+# apply index to table to sort according to average relative abundance
+otu.relative.t.df.sort <- otu.relative.t.df[order(-otu.relative.t.df$average),]
+otu.relative.t.df.sort.100 <- otu.relative.t.df.sort[1:100,1:47]
+otu.top100 <- t(otu.relative.t.df.sort.100)
+otu.top100.n <- otu.top100[order(row.names(otu.top100)),] 
+otu.top100.n.df <- as.data.frame(otu.top100.n)
+# 
+otu_meta100 <- cbind(otu.top100.n.df, meta_sorted)
+
+logit <- function(x){-log(-1 + i/(x+1e-6))}
+otu_100.trans <- logit(otu_meta100[,1:100])
+otu_meta100.trans <- cbind(otu_100.trans, meta_sorted)
+
+varlist.trans <- names(otu_meta100.trans)[1:100]
+models100.trans <- lapply(varlist.trans, function(x) {
+    lm(substitute(i ~ Serial_day, list(i = as.name(x))), data = otu_meta100.trans)
+})
+
+summary100.trans <- lapply(models100.trans, summary)
+
+pvalues100.trans <- c()
+for(i in 1:100){
+  pvalues100.trans[i] <- pf(summary100.trans[[i]]$fstatistic[1], summary100.trans[[i]]$fstatistic[2], summary100.trans[[i]]$fstatistic[3],
+     lower.tail = FALSE)
+}
+
+rsquared100.trans <- c()
+for(i in 1:100){
+  rsquared100.trans[i] <- summary100.trans[[i]]$adj.r.square
+}
+
+lm_table_otus <- data.frame(pvalues100.trans, rsquared100.trans)
+row.names(lm_table_otus) <- colnames(otu_100.trans)
+
+signif_otus <- subset(lm_table_otus, pvalues100.trans<=0.05)
+dim(signif_otus)
+
+seasonal_otus <- otu_meta100[,row.names(signif_otus)]
+day <- meta_sorted$Serial_day
+
+seasonal_otus <- seasonal_otus[order(day),]
+day_sort <- day[order(day)]
+
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("seasonal_otus.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(seasonal_otus)){
+  y <- seasonal_otus[,cn]
+  one <- loess(y~day_sort,span = 0.25)
+  hat <- predict(one)
+  plot(y~day_sort, main=cn)
+  lines(day_sort, hat, col="red")
+  
+  }
+
+par <- opar
+dev.off()
+
+# wss <- (nrow(mydata)-1)*sum(apply(mydata,2,var))
+#   for (i in 2:15) wss[i] <- sum(kmeans(mydata,
+#                                        centers=i)$withinss)
+# plot(1:15, wss, type="b", xlab="Number of Clusters",
+#      ylab="Within groups sum of squares")
+# 
+# 
+# write.csv(otu.top100.n.df, "top.100.otus.csv")
+
+seasonal_otus <- 
+  seasonal_otus[order(row.names(seasonal_otus)), ]
+
+seasonal_otus_t <- as.data.frame(t(seasonal_otus))
+
+seasonal_otus_t$average <- apply(seasonal_otus_t, 1, mean)
+
+seasonal_otus_t <- 
+  seasonal_otus_t[order(-seasonal_otus_t$average), ]
+
+seasonal <- t(seasonal_otus_t[c(1:6,8:11),1:47])
+seasonal_meta <- as.data.frame(cbind(seasonal, meta_sorted$Serial_day, meta_sorted$Season))
+seasonal_meta <- rename(seasonal_meta, c(V11="Serial_day", V12="Season"))
+
+otus_for_plot_melt <- melt(seasonal_meta, id=c("Serial_day", "Season"))
+colnames(otus_for_plot_melt) <- c("Day","Season", "OTU", "Abundance")
+
+otus_for_plot_melt$Day <- as.numeric(as.character(otus_for_plot_melt$Day))
+otus_for_plot_melt$Abundance <- as.numeric(as.character(otus_for_plot_melt$Abundance))
+
+```
+
+   
+```{r plot_top_otus_with_seasonality, echo=FALSE}   
+
+otu_name <- c(
+    "907828"   = "Polaribacter \n (907828)",
+    "789831"   = "Rhodobacteraceae \n (789831)",
+    "785501"   = "Rhodobacteraceae \n (785501)",
+    "1023473" = "Flavobacteriaceae \n (1023473)",
+    "909231"   = "Flavobacteriaceae \n (909231)",
+    "810446"  = "Colwelliaceae \n (810446)",
+    "1108577"   = "Alphaproteobacteria \n (1108577)",
+    "277620"   = "Flavobacteriaceae \n (277620)",
+    "816454"   = "Flavobacterium \n (816454)",
+    "891587"   = "Alphaproteobacterial \n (891587)"
+)
+
+
+
+p1 <- ggplot(otus_for_plot_melt[1:235,1:4], 
+                aes(x=Day, y=Abundance, group=Season, color=Season)) +
+    geom_point(size=1.5) +
+    geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    #stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+         axis.text.y = element_text(size=8),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p1 + facet_grid(OTU~., scales = "free_y", labeller=as_labeller(otu_name))
+
+p2 <- ggplot(otus_for_plot_melt[236:470,1:4], 
+                aes(x=Day, y=Abundance, group=Season, color=Season)) +
+    geom_point(size=1.5) +
+    geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    #stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+        axis.text.y = element_text(size=8),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p2 + facet_grid(OTU~., scales = "free_y", labeller=as_labeller(otu_name))
+
+```
+
+
+# Figure 10. Taxa barplot
+
+```{r set_up_agg_taxa_table, echo=FALSE}
+
+tdt <- function(inpdt){
+  transposed <- t(inpdt[,-1,with=F]);
+  colnames(transposed) <- inpdt[[1]];
+  transposed <- data.table(transposed, keep.rownames=T);
+  setnames(transposed, 1, names(inpdt)[1]);
+  return(transposed);
+}
+
+# read in the taxa table and order by sample number
+taxaL6 <- fread("complete_16S_dataset/cdout_LTER_bac_higher_threshold/taxa_plots/table_mc40000_sorted_L6.txt", skip=1)
+taxaL6.transpose <- tdt(taxaL6)
+idx_taxa <- order(taxaL6.transpose$'#OTU ID', decreasing=FALSE)
+taxa_sorted <- taxaL6.transpose[idx_taxa]
+
+# convert to data frame and transpose again
+taxa_sorted.df <- as.data.frame(taxa_sorted)
+taxa_t <- t(taxa_sorted.df[,-1])
+colnames(taxa_t) <- taxa_sorted.df[,1]
+
+# get row means
+taxa_t <- as.data.frame(taxa_t)
+
+myselection <- data.frame(idx=1:1060)
+myselection$name <- 'Other'
+myselection$name[5:29] <- 'p__Acidobacteria'
+myselection$name[30:40] <- 'p__Actinobacteria;c__Acidimicrobiia;o__Acidimicrobiales'
+myselection$name[41:111] <- 'p__Actinobacteria;c__Actinobacteria;o__Actinomycetales'
+myselection$name[112:128] <- 'p__Actinobacteria (Other)'
+myselection$name[134:160] <- 'p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales'
+myselection$name[c(161:176,185:188)] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales (Other)'
+myselection$name[177:184] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales;f__Flammeovirgaceae'
+myselection$name[c(189,190,225:231,198:204,206:216,218:223,205)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales (Other)'
+myselection$name[191:197] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Cryomorphaceae'
+#myselection$name[c(198:204,206:216,218:223)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae (Other)'
+myselection$name[217] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Polaribacter'
+#myselection$name[205] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Flavobacterium'
+myselection$name[224] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__NS9'
+myselection$name[c(131:133,232:257)] <- 'p__Bacteroidetes (Other)'
+myselection$name[274:293] <- 'p__Chloroflexi'
+myselection$name[327:447] <- 'p__Firmicutes'
+myselection$name[448:453] <- 'p__Fusobacteria'
+myselection$name[491:499] <- 'p__Nitrospirae'
+myselection$name[518:545] <- 'p__Planctomycetes'
+myselection$name[548:592] <- 'p__Proteobacteria;c__Alphaproteobacteria (Other)'
+myselection$name[593:610] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodobacterales;f__Rhodobacteraceae'
+myselection$name[611:620] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodospirillales'
+myselection$name[622] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales;f__Pelagibacteraceae'
+myselection$name[c(621,623:625)] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales (Other)'
+myselection$name[627:641] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Sphingomonadales'
+myselection$name[644:666] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales'
+myselection$name[673:675] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Neisseriales'
+myselection$name[c(687:695,714:743,745:748,750:755)] <- 'p__Proteobacteria;c__Deltaproteobacteria'
+myselection$name[696:712] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales (Other)'
+myselection$name[c(744,749)] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__SAR324'
+myselection$name[713] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales;f__Nitrospinaceae;g__Nitrospina'
+myselection$name[c(930:944,884:903,767:774,799,814:841,845:862)] <- 'p__Proteobacteria;c__Gammaproteobacteria (Other)'
+myselection$name[c(775:794,802:807,809:813)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales (Other)'
+myselection$name[795:798] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Colwelliaceae'
+myselection$name[808] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Psychromonadaceae;g__Psychromonas'
+myselection$name[c(800,801,842:844)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__HTCC2188'
+myselection$name[c(863:868,874:883, 869:873)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales'
+#myselection$name[c(863:868,874:883)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales (Other)' # combine with Halamonadaceae above
+#myselection$name[869:873] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales;f__Halomonadaceae' # combine with Oceanospirillales above
+myselection$name[c(904:905,911:919)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales (Other)'
+myselection$name[906:910] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales;f__Piscirickettsiaceae'
+myselection$name[920:929] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Vibrionales'
+myselection$name[949:962] <- 'p__SAR406'
+myselection$name[978:984] <- 'p__TM6'
+myselection$name[965:977] <- 'p__Spirochaetes'
+myselection$name[985:989] <- 'p__TM7'
+myselection$name[990:1000] <- 'p__Tenericutes'
+myselection$name[1003:1045] <- 'p__Verrucomicrobia'
+
+taxa_t$mygrp <- myselection$name
+
+agg1 <- by(taxa_t, taxa_t$mygrp, function(x) colSums(x[,1:47]))
+agg2 <- do.call(rbind,as.list(agg1))
+agg2 <- data.frame(cbind(agg2,avg=rowSums(agg2)/NCOL(agg2)))
+
+# apply index to table to sort according to average relative abundance
+idx <- order(agg2$avg, decreasing = TRUE)
+agg2_sorted <- agg2[idx, ]
+
+```
+
+
+
+```{r aggregated_taxa_plot_by_month, echo=FALSE, fig.cap="Relative abundance of select taxa, July 2013-March 2014.", fig.width=7, fig.height=10, eval=FALSE}
+
+Other <- colSums(agg2_sorted[c(7,9,10,16,21:45),(1:47)])
+
+#transpose yet again, rename rows, keep only top 11 taxa and add Other column
+agg2_sorted_t <- t(agg2_sorted[,-(48)])
+rownames(agg2_sorted_t) <- meta_sorted$Month
+agg2_sorted_t_other<-agg2_sorted_t[,c(1:6,8,11:15,17:20)]
+agg2_sorted_t_other <- cbind(agg2_sorted_t_other, Other)
+#convert data to long format for stacked bar plot
+agg2_sorted_melt <- melt(agg2_sorted_t_other)
+colnames(agg2_sorted_melt) <- c("Month", "Taxa", "RelativeAbundance")
+
+#summarize data
+tdata <- ddply(agg2_sorted_melt, c("Month", "Taxa"), summarise,
+               N = length(RelativeAbundance),
+               mean = mean(RelativeAbundance),
+               sd   = sd(RelativeAbundance),
+               se   = sd / sqrt(N)
+)
+
+
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+ggplot(data = tdata, aes(x = Month, y = mean, fill = Taxa)) + 
+  geom_bar(stat="identity", colour="black", size=0.1) +
+   scale_fill_manual(values = getPalette(17),                  
+                    guide = guide_legend(reverse=TRUE),
+                    labels=c("Pelagibacteraceae", "Polaribacter",
+                             "Rhodobacteraceae","Flavobacteriales",  
+                             "Oceanospirillales", "Colwelliaceae",
+                             "Cryomorphaceae",
+                             "NS9", "HTCC2188","Flammeovirgaceae", 
+                             "Piscirickettsiales", "Vibrionales",
+                             "Rhodospirillales",
+                              "SAR324",  "SAR406", "Nitrospina",
+                              "Other")) +
+  scale_x_discrete(labels=c("Oct","Nov","Dec","Jan","Feb","Mar")) +
+  ylab("Relative abundance") +
+  theme_bw() +
+  theme(text = element_text(size=12),
+        axis.text.x = element_text(vjust=1),
+        legend.direction="vertical",
+        legend.text=element_text(size=10))
+
+```
+
+```{r aggregated_taxa_plot_by_facet_by_season, echo=FALSE, fig.cap="Relative abundance of select taxa.", fig.width=7, fig.height=10}
+
+Other <- colSums(agg2_sorted[c(7,9,10,16,21:45),(1:47)])
+
+#transpose yet again, rename rows, keep only top 11 taxa and add Other column
+agg2_sorted_t <- t(agg2_sorted[,-(48)])
+#rownames(agg2_sorted_t) <- meta_sorted$MonthYear
+agg2_sorted_t_other<-agg2_sorted_t[,c(1:6,8,11:15,17:20)]
+agg2_sorted_t_other <- cbind(agg2_sorted_t_other, Other)
+agg2_sorted_t_other <- as.data.frame(agg2_sorted_t_other)
+agg2_sorted_t_other$Month <- meta_sorted$Month
+agg2_sorted_t_other$Season <- meta_sorted$Season
+#convert data to long format for stacked bar plot
+agg2_sorted_melt <- melt(agg2_sorted_t_other, id=c("Month","Season"))
+colnames(agg2_sorted_melt) <- c("Month", "Season", "Taxa", "RelativeAbundance")
+
+#summarize data
+tdata <- ddply(agg2_sorted_melt, c("Month", "Season", "Taxa"), summarise,
+               N = length(RelativeAbundance),
+               mean = mean(RelativeAbundance),
+               sd   = sd(RelativeAbundance),
+               se   = sd / sqrt(N)
+)
+
+# tdata.PAL0910 <- tdata[1:57,]
+# tdata.PAL1011 <- tdata[58:133,]
+# tdata.PAL1112 <- tdata[134:190,]
+# tdata.PAL1213 <- tdata[191:304,]
+
+# tdata$Date <- factor(tdata$Date, levels=c("Oct2012","Nov2009","Nov2012",
+#                                              "Dec2009","Dec2010","Dec2011",
+#                                              "Dec2012","Jan2010","Jan2011",
+#                                              "Jan2012","Jan2013","Feb2011",
+#                                              "Feb2013","Mar2011","Mar2012",
+#                                              "Mar2013"))
+
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+tdata$Month <- factor(tdata$Month, levels=c("Oct","Nov","Dec","Jan","Feb","Mar"))
+
+p1 <- ggplot(data = tdata, aes(x = Month, y = mean, fill = Taxa)) + 
+  geom_bar(stat="identity", colour="black", size=0.1) +
+   scale_fill_manual(values = getPalette(17),                  
+                    guide = guide_legend(reverse=TRUE),
+                    labels=c("Pelagibacteraceae",
+                             expression(italic("Polaribacter")),
+                             "Rhodobacteraceae","Flavobacteriales",  
+                             "Oceanospirillales", "Colwelliaceae",
+                             "Cryomorphaceae",
+                             "NS9", "HTCC2188","Flammeovirgaceae", 
+                             "Piscirickettsiales", "Vibrionales",
+                              "Rhodospirillales",
+                              "SAR324",  "SAR406", 
+                              expression(italic("Nitrospina")),
+                              "Other")) +
+  scale_x_discrete(labels=c("O","N","D","J","F","M")) +
+  ylab("Relative abundance") +
+  #ggtitle("PAL0910") +
+ theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p1 + facet_grid(.~Season)
+
+
+
+```
+
+```{r aggregated_taxa_plot_facet_by_month, echo=FALSE, fig.cap="Relative abundance of select taxa.", fig.width=7, fig.height=10, eval=FALSE}
+
+Other <- colSums(agg2_sorted[c(7,9,10,16,21:45),(1:47)])
+
+#transpose yet again, rename rows, keep only top 11 taxa and add Other column
+agg2_sorted_t <- t(agg2_sorted[,-(48)])
+#rownames(agg2_sorted_t) <- meta_sorted$MonthYear
+agg2_sorted_t_other<-agg2_sorted_t[,c(1:6,8,11:15,17:20)]
+agg2_sorted_t_other <- cbind(agg2_sorted_t_other, Other)
+agg2_sorted_t_other <- as.data.frame(agg2_sorted_t_other)
+agg2_sorted_t_other$Month <- meta_sorted$Month
+agg2_sorted_t_other$Season <- meta_sorted$Season
+#convert data to long format for stacked bar plot
+agg2_sorted_melt <- melt(agg2_sorted_t_other, id=c("Month","Season"))
+colnames(agg2_sorted_melt) <- c("Month", "Season", "Taxa", "RelativeAbundance")
+
+#summarize data
+tdata <- ddply(agg2_sorted_melt, c("Month", "Season", "Taxa"), summarise,
+               N = length(RelativeAbundance),
+               mean = mean(RelativeAbundance),
+               sd   = sd(RelativeAbundance),
+               se   = sd / sqrt(N)
+)
+
+# tdata.PAL0910 <- tdata[1:57,]
+# tdata.PAL1011 <- tdata[58:133,]
+# tdata.PAL1112 <- tdata[134:190,]
+# tdata.PAL1213 <- tdata[191:304,]
+
+# tdata$Date <- factor(tdata$Date, levels=c("Oct2012","Nov2009","Nov2012",
+#                                              "Dec2009","Dec2010","Dec2011",
+#                                              "Dec2012","Jan2010","Jan2011",
+#                                              "Jan2012","Jan2013","Feb2011",
+#                                              "Feb2013","Mar2011","Mar2012",
+#                                              "Mar2013"))
+
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+tdata$Month <- factor(tdata$Month, levels=c("Oct","Nov","Dec","Jan","Feb","Mar"))
+
+p1 <- ggplot(data = tdata, aes(x = Season, y = mean, fill = Taxa)) + 
+  geom_bar(stat="identity", colour="black", size=0.1) +
+   scale_fill_manual(values = getPalette(17),                  
+                    guide = guide_legend(reverse=TRUE),
+                    labels=c("Pelagibacteraceae", "Polaribacter",
+                             "Rhodobacteraceae","Flavobacteriales",  
+                             "Oceanospirillales", "Colwelliaceae",
+                             "Cryomorphaceae",
+                             "NS9", "HTCC2188","Flammeovirgaceae", 
+                             "Piscirickettsiales", "Vibrionales",
+                              "Rhodospirillales",
+                              "SAR324",  "SAR406", "Nitrospina",
+                              "Other")) +
+  #scale_x_discrete(labels=c("Oct","Nov","Dec","Jan","Feb","Mar")) +
+  ylab("Relative abundance") +
+  #ggtitle("PAL0910") +
+  theme_bw() +
+  theme(text = element_text(size=12),
+        axis.text.x = element_text(vjust=1,angle=90),
+        legend.direction="vertical",
+        legend.text=element_text(size=10))
+
+p1 + facet_grid(.~Month)
+
+
+
+```
+
+
+# PERMANOVA analysis
+
+```{r adonis, echo=FALSE}
+
+# ============= November ================
+
+# Filter out Jan rows
+otutable_bac_samples_t_nov <- otutable_bac_samples_t[meta_sorted$Month=="Nov",]
+meta_sorted_nov <- meta_sorted[meta_sorted$Month=="Nov",]
+
+# run adonis
+ado_nov <- adonis(otutable_bac_samples_t_nov~Season, data=meta_sorted_nov, distance="bray", permutations=999)
+ado_nov ## p = 0.05, r2=0.29
+
+# check assumptions 
+#(see: http://thebiobucket.blogspot.com/2011/04/assumptions-for-permanova-with-adonis.html)
+d_nov <- vegdist(otutable_bac_samples_t_nov, method="bray")
+mod_nov <- with(meta_sorted_nov, betadisper(d_nov, Season))
+b_nov <- boxplot(mod_nov)
+aov_beta_nov <- anova(mod_nov)
+aov_beta_nov ## not significant
+
+
+# ============= December ================
+
+# Filter out December rows
+otutable_bac_samples_t_dec <- otutable_bac_samples_t[meta_sorted$Month=="Dec",]
+meta_sorted_dec <- meta_sorted[meta_sorted$Month=="Dec",]
+
+# run adonis
+ado_dec <- adonis(otutable_bac_samples_t_dec~Season, data=meta_sorted_dec, distance="bray", permutations=999)
+ado_dec ## p = 0.002, r2 = 0.67
+
+# check assumptions 
+#(see: http://thebiobucket.blogspot.com/2011/04/assumptions-for-permanova-with-adonis.html)
+d_dec <- vegdist(otutable_bac_samples_t_dec, method="bray")
+mod_dec <- with(meta_sorted_dec, betadisper(d_dec, Season))
+b_dec <- boxplot(mod_dec)
+aov_beta_dec <- anova(mod_dec)
+aov_beta_dec ## p = 0.04
+tuk_dec <- TukeyHSD(mod_dec) 
+tuk_dec ## PAL1011 lower than PAL1213
+
+
+# ============= January ================
+
+# Filter out Jan rows
+otutable_bac_samples_t_jan <- otutable_bac_samples_t[meta_sorted$Month=="Jan",]
+meta_sorted_jan <- meta_sorted[meta_sorted$Month=="Jan",]
+
+# run adonis
+ado_jan <- adonis(otutable_bac_samples_t_jan~Season, data=meta_sorted_jan, distance="bray", permutations=999)
+ado_jan ## p = 0.029, r2 = 0.48
+
+# check assumptions 
+#(see: http://thebiobucket.blogspot.com/2011/04/assumptions-for-permanova-with-adonis.html)
+d_jan <- vegdist(otutable_bac_samples_t_jan, method="bray")
+mod_jan <- with(meta_sorted_jan, betadisper(d_jan, Season))
+boxplot(mod_jan)
+aov_beta_jan <- anova(mod_jan)
+aov_beta_jan  ## not significant
+
+
+# ============= February ================
+
+# Filter out Feb rows
+otutable_bac_samples_t_feb <- otutable_bac_samples_t[meta_sorted$Month=="Feb",]
+meta_sorted_feb <- meta_sorted[meta_sorted$Month=="Feb",]
+
+# run adonis
+ado_feb <- adonis(otutable_bac_samples_t_feb~Season, data=meta_sorted_feb, distance="bray", permutations=999)
+ado_feb # p = 0.1, r2 = 0.51
+
+# check assumptions 
+#(see: http://thebiobucket.blogspot.com/2011/04/assumptions-for-permanova-with-adonis.html)
+d_feb <- vegdist(otutable_bac_samples_t_feb, method="bray")
+mod_feb <- with(meta_sorted_feb, betadisper(d_feb, Season))
+boxplot(mod_feb)
+aov_beta_feb <- anova(mod_feb)
+aov_beta_feb # not signif
+
+# ============= March ================
+
+# Filter out Mar rows
+otutable_bac_samples_t_mar <- otutable_bac_samples_t[meta_sorted$Month=="Mar",]
+meta_sorted_mar <- meta_sorted[meta_sorted$Month=="Mar",]
+
+# run adonis
+ado_mar <- adonis(otutable_bac_samples_t_mar~Season, data=meta_sorted_mar, distance="bray", permutations=999)
+ado_mar ## p = 0.001, r2 = 0.62
+
+# check assumptions 
+#(see: http://thebiobucket.blogspot.com/2011/04/assumptions-for-permanova-with-adonis.html)
+d_mar <- vegdist(otutable_bac_samples_t_mar, method="bray")
+mod_mar <- with(meta_sorted_mar, betadisper(d_mar, Season))
+boxplot(mod_mar)
+aov_beta_mar <- anova(mod_mar)
+aov_beta_mar ## not signif
+
+
+multiplot(b_nov, b_dec, cols=1)
+
+
+```
+
+# Ancillary data plots
+
+## Figures 1 and 2. Chl, PP, BA, BP
+
+```{r plot_leucine, echo=FALSE}
+
+require(bit64)
+meta_bac <- fread('metadata_bacteria_Aug11.txt')
+meta_bac[meta_bac == -999] <- NA
+
+meta_bac$Date <- as.Date.character(meta_bac$DateGMT, format = "%m/%d/%y")
+
+g.leu <- ggplot(meta_bac, aes(x=Date, y=Leucine)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("BP (pmol ", l^{-1},hr^{-1},")"))) +
+    #scale_y_continuous(trans = log10_trans()) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.leu <- g.leu + facet_grid(.~studyName, scales = "free")
+
+facet.leu
+    
+
+
+```
+
+```{r plot_abundance, echo=FALSE}
+
+meta_bac$Abundance <- as.numeric(meta_bac$Abundance)
+
+g.ba <- ggplot(meta_bac, aes(x=Date, y=Abundance)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("BA (cells ", l^{-1}, ")"))) +
+    scale_y_continuous(breaks=c(0, 1000000000, 2000000000, 3000000000),
+                      labels=c("0", "1e9","2e9", "3e9")) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+
+facet.ba <- g.ba + facet_grid(.~studyName, scales = "free")
+
+facet.ba
+    
+
+```
+
+
+```{r plot_chla, echo=FALSE}
+
+meta_chl <- fread('metadata_chla_Aug11.txt')
+
+meta_chl$Date <- as.Date.character(meta_chl$DatetimeGMT, format = "%m/%d/%y %H:%M")
+meta_chl$ShortDate <- format(meta_chl$Date,"%m-%d")
+meta_chl$Month <- format(meta_chl$Date,"%m")
+
+g.chl <- ggplot(meta_chl, aes(x=Date, y=Chlorophyll)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Chl ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.chl <- g.chl + facet_grid(.~studyName, scales = "free")
+
+facet.chl
+    
+
+
+```
+
+```{r primary_production}
+
+pp <- fread('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Primary Production 0910-1314.csv')
+
+pp$Date <- as.Date.character(pp$DatetimeGMT, format = "%m/%d/%y %H:%M")
+pp$ShortDate <- format(pp$Date,"%m-%d")
+pp$Month <- format(pp$Date,"%m")
+
+pp2 <- pp[which(pp$studyName=="PAL0910" |
+                  pp$studyName=="PAL1011" |
+                  pp$studyName=="PAL1112" |
+                  pp$studyName=="PAL1213"),]
+pp.b0 <- pp2[which(pp2$Station=="B" & pp2$Depth==0),]
+pp.b0[pp.b0 == -999] <- NA
+
+# ========== pp plot ==============================
+g.pp <- ggplot(pp.b0, aes(x=Date, y=PP)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Primary Production (mg ", m^{-3}, d^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+  scale_x_date(date_breaks="1 month", 
+                     date_labels="%b") +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.pp <- g.pp + facet_grid(.~studyName, scales="free")
+
+facet.pp
+
+grid.arrange(facet.pp, facet.chl)
+grid.arrange(facet.leu, facet.ba)
+
+
+```
+
+
+```{r}
+
+g.ba.box <- ggplot(meta_bac, aes(x=studyName, y=Abundance)) +
+  geom_boxplot(width=0.3,outlier.shape = 1) +
+   xlab("") +
+  theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+g.leu.box <- ggplot(meta_bac, aes(x=studyName, y=Leucine)) +
+  geom_boxplot(width=0.3, outlier.shape = 1) +
+  xlab("") +
+  theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+g.chl.box <- ggplot(meta_chl, aes(x=studyName, y=Chlorophyll)) +
+  geom_boxplot(width=0.3, outlier.shape = 1)+
+   xlab("") +
+  theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+g.pp.box <- ggplot(pp.b0, aes(x=studyName, y=PP)) +
+  geom_boxplot(width=0.3, outlier.shape = 1)+
+   xlab("") +
+  theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+grid.arrange(g.chl.box,g.leu.box,g.pp.box)
+
+```
+
+
+
+
+
+## Figure 3. Nutrients
+```{r plot_nutrients}
+
+nut <- fread('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Dissolved Inorganic Nutrients 0910-1213.csv')
+
+nut$Date <- as.Date.character(nut$'DatetimeGMT', format = "%m/%d/%y %H:%M")
+nut$ShortDate <- format(nut$Date,"%m-%d")
+nut$Month <- format(nut$Date,"%m")
+
+nut2 <- nut[which(nut$studyName=="PAL0910" |
+                  nut$studyName=="PAL1011" |
+                  nut$studyName=="PAL1112" |
+                  nut$studyName=="PAL1213"),]
+nut.b0 <- nut2[which(nut2$Station=="B" & nut2$Depth==0),]
+nut.b0[nut.b0 == -999] <- NA
+
+# ========== phosphate plot ==============================
+g.pho <- ggplot(nut.b0[!is.na(nut.b0$Phosphate),], aes(x=Date, y=Phosphate)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Phosphate (", mu, "mol ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.pho <- g.pho + facet_grid(.~studyName, scales="free")
+
+#facet.pho
+    
+# ========== silicate plot ==============================
+g.sil <- ggplot(nut.b0[!is.na(nut.b0$Silicate),], aes(x=Date, y=Silicate)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Silicate (", mu, "mol ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.sil <- g.sil + facet_grid(.~studyName, scales="free")
+
+#facet.sil
+
+# ========== nitrate plot ==============================    
+g.nit <- ggplot(nut.b0[!is.na(nut.b0$NitriteNitrate),], aes(x=Date, y=NitriteNitrate)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Nitrate and Nitrite (", mu, "mol ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.nit <- g.nit + facet_grid(.~studyName, scales="free")
+
+#facet.nit
+    
+grid.arrange(facet.nit, facet.pho, facet.sil)
+
+```
+
+
+## Figure 4. DOC, POC, and PON
+```{r plot_DOC_POC_PON}
+
+doc <- fread('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Dissolved Organic Carbon 0809-1112.csv')
+
+doc$Date <- as.Date.character(doc$DateGMT, format = "%m/%d/%y")
+doc$ShortDate <- format(doc$Date,"%m-%d")
+doc$Month <- format(doc$Date,"%m")
+
+doc2 <- doc[which(doc$studyName=="PAL0910" |
+                  doc$studyName=="PAL1011" |
+                  doc$studyName=="PAL1112"),]
+doc.b0 <- doc2[which(doc2$Station=="B" & doc2$Depth==0),]
+doc.b0[doc.b0 == -999] <- NA
+
+# ========== DOC plot ==============================
+g.doc <- ggplot(doc.b0[!is.na(doc.b0$DOC),], aes(x=Date, y=DOC)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("DOC (", mu, "mol ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.doc <- g.doc + facet_grid(.~studyName, scales="free")
+
+facet.doc
+    
+# ========= get particulate data =======================
+
+cn <- fread('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Particulate Organic Carbon and Nitrogen 0910-1112.csv')
+
+cn$Date <- as.Date.character(cn$DatetimeGMT, format = "%m/%d/%y %H:%M")
+cn$ShortDate <- format(cn$Date,"%m-%d")
+cn$Month <- format(cn$Date,"%m")
+
+cn2 <- cn[which(cn$studyName=="PAL0910" |
+                  cn$studyName=="PAL1011" |
+                  cn$studyName=="PAL1112"),]
+cn.b0 <- cn2[which(cn2$Station=="B" & cn2$Depth==0),]
+cn.b0[cn.b0 == -999] <- NA
+
+
+
+
+# ========== poc plot ==============================
+g.poc <- ggplot(cn.b0[!is.na(cn.b0$POC),], aes(x=Date, y=POC)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+     ylab(expression(paste("POC (", mu, "g ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.poc <- g.poc + facet_grid(.~studyName, scales="free")
+
+facet.poc
+
+# ========== pon plot ==============================    
+g.pon <- ggplot(cn.b0[!is.na(cn.b0$PON),], aes(x=Date, y=PON)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+     ylab(expression(paste("POC (", mu, "g ", l^{-1}, ")"))) +
+    #scale_y_continuous(trans = log10_trans(),
+     #                  breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.pon <- g.pon + facet_grid(.~studyName, scales="free")
+
+facet.pon
+    
+grid.arrange(facet.doc, facet.poc, facet.pon)
+
+```
+
+
+
+## Depth integrations
+
+```{r integrated_BP}
+
+BC <- read.csv("/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Bacteria_Complete 0809-1314.csv",stringsAsFactors = FALSE)
+
+BC[BC == -999] <- NA
+BC <- BC[which(BC$studyName=="PAL0910" |
+                  BC$studyName=="PAL1011" |
+                  BC$studyName=="PAL1112" |
+                  BC$studyName=="PAL1213"),]
+BC <- BC[which(BC$Depth..m. < 50),]
+            
+trap_integrate <- function(data){
+  x <- data[, 1]
+  y <- data[, 2]
+  y <- y[order(x)]
+  x <- x[order(x)]
+  area = 0
+  for (i in 2:length(x)){
+    area <- area + 0.5 * (y[i] + y[i-1]) * (x[i] - x[i-1])
+  }
+  area
+}
+
+library(Hmisc)
+
+# in summarize(cbind(<depth column>,<value to integrate>))
+
+bc_leu <- with(BC, summarize(cbind(Depth..m., Leucine),
+                                    by=llist(Date.GMT, Station.Name, studyName),
+                                    FUN=trap_integrate))
+
+bc_leu.b <- bc_leu[which(bc_leu$Station.Name=="B"),] 
+
+colnames(bc_leu.b) <- c("Date", "Station", "studyName", "Leucine")
+
+bc_leu.b$Date <- as.Date.character(bc_leu.b$Date, format = "%m/%d/%y")
+
+
+g.leu <- ggplot(bc_leu.b, aes(x=Date, y=Leucine)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("Int. BP (", mu, "mol ", m^{-2},hr^{-1},")"))) +
+    scale_y_continuous(breaks=c(0, 2e6, 4e6, 6e6),
+                       labels=c("0","2","4","6")) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.leu <- g.leu + facet_grid(.~studyName, scales = "free")
+
+facet.leu
+
+
+```
+
+```{r integrated_pp}
+
+pp <- fread('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Primary Production 0910-1314.csv')
+
+pp$Date <- as.Date.character(pp$DatetimeGMT, format = "%m/%d/%y %H:%M")
+
+
+pp <- pp[which(pp$studyName=="PAL0910" |
+                  pp$studyName=="PAL1011" |
+                  pp$studyName=="PAL1112" |
+                  pp$studyName=="PAL1213"),]
+pp <- pp[which(pp$Station=="B"),]
+
+pp[pp == -999] <- NA
+
+
+pp_int <- with(pp, summarize(cbind(Depth, PP),
+                                    by=llist(Date, Station, studyName),
+                                    FUN=trap_integrate))
+
+
+colnames(pp_int) <- c("Date", "Station", "studyName", "PP")
+
+pp_int <- as.data.frame(pp_int)
+
+#pp_int$Date <- as.Date.character(pp_int.b$Date, format = "%m/%d/%y")
+
+
+g.pp <- ggplot(pp_int, aes(x=Date, y=PP)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("") + 
+    ylab(expression(paste("BP (pmol ", m^{-2},hr^{-1},")"))) +
+    #scale_y_continuous(trans = log10_trans()) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.pp <- g.pp + facet_grid(.~studyName, scales = "free")
+
+facet.pp
+
+
+
+
+
+
+```
+
+```{r integrated_chl}
+
+chl <- read.csv('/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Chlorophyll 0910-1314.csv',stringsAsFactors = FALSE)
+
+chl$Date <- as.Date.character(chl$Datetime.GMT, format = "%m/%d/%y %H:%M")
+
+
+chl <- chl[which(chl$studyName=="PAL0910" |
+                  chl$studyName=="PAL1011" |
+                  chl$studyName=="PAL1112" |
+                  chl$studyName=="PAL1213"),]
+#chl <- chl[which(chl$Station=="E"),]
+chl <- chl[which(chl$Depth < 50),]
+
+chl[chl == -999] <- NA
+
+chl_int <- with(chl, summarize(cbind(Depth, Chlorophyll),
+                                    by=llist(Date, studyName),
+                                    FUN=trap_integrate))
+
+colnames(chl_int) <- c("Date", "studyName", "chl")
+
+chl_int <- as.data.frame(chl_int)
+
+chl_int$Date <- as.Date.character(chl_int$Date, format = "%Y-%m-%d")
+
+chl_int$Month <- format(chl_int$Date,"%m")
+
+g.chl <- ggplot(chl_int, aes(x=Date, y=chl)) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    geom_hline(yintercept=108, linetype="dashed", color="red") +
+    xlab("") + 
+     ylab(expression(paste("Int. Chl ", italic("a "), "(mg ", m^{-2},")"))) +
+    #scale_y_continuous(trans = log10_trans()) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.chl <- g.chl + facet_grid(.~studyName, scales = "free")
+
+facet.chl
+
+grid.arrange(facet.chl, facet.leu)
+
+chl_int_djf <- chl_int[which(chl_int$Month=="12"|
+                             chl_int$Month=="01"|
+                             chl_int$Month=="02"),]
+
+summary(chl_int_djf$chl[1:38]) #129
+summary(chl_int_djf$chl[39:51]) #144
+summary(chl_int_djf$chl[52:75]) #107
+summary(chl_int_djf$chl[75:99]) #76
+
+
+```
+
+
+
+
+
+
+
+
+
+
+# Figure 9. Bray curtis over time
+```{r}
+
+bcdist <- vegdist(otutable_bac_samples_t, method="bray")
+
+meta_df$Date <-  as.Date(meta_df$Date, format = "%m/%d/%y")
+
+date_lag <- matrix(nrow = NROW(meta_df), ncol = NROW(meta_df))
+i <- 1
+for( d in meta_df$Date){
+  j <- 1
+  for (k in meta_df$Date){
+    date_lag[i,j] = d - k
+    j <- j + 1
+  }
+  i <- i + 1
+}
+
+colnames(date_lag) <- meta_df$SampleID
+row.names(date_lag) <- meta_df$SampleID
+
+lags <- c()
+for ( i in 1:(NROW(meta_df)-1)){
+  for (j in (i+1):NROW(meta_df))
+    lags <- c(lags,date_lag[j,i])
+}
+
+bcdistlag <- data.frame(lags=lags,dist=c(bcdist))
+
+plot(bcdistlag)
+
+bcdistlag$weeks <- Hmisc::cut2(bcdistlag$lags, seq(0,1250,7))
+plot(aggregate(bcdistlag$dist,by = list(bcdistlag$weeks),mean))
+
+bcdistlag$months <- Hmisc::cut2(bcdistlag$lags, seq(0,1250,30))
+bcdistlag$sim <- 1-bcdistlag$dist
+bcdistlag$monthlag <- bcdistlag$lags/30
+bcdistlag$monthlag <- round(bcdistlag$monthlag)
+bcdistlag$weeklag <- bcdistlag$lags/7
+bcdistlag$weeklag <- round(bcdistlag$weeklag)
+
+agg_sim <- ddply(bcdistlag, "monthlag", summarise,
+                N.sim = length(sim),
+                mean.sim = mean(sim),
+                sd.sim   = sd(sim),
+                se.sim   = sd.sim/ sqrt(N.sim),
+                   N.dist = length(dist),
+                mean.dist = mean(dist),
+                sd.dist   = sd(dist),
+                se.dist   = sd.dist/ sqrt(N.dist))
+
+summary(lm(sim~monthlag, data=bcdistlag))
+
+ggplot(agg_sim, aes(x=monthlag, y=mean.sim)) +
+  geom_point() +
+  geom_line() +
+  geom_vline(xintercept=c(0,12,24,36), linetype="longdash", color="grey") +
+  #stat_smooth(method="lm", se=FALSE) +
+  xlab("Time lag (months apart)") +
+  scale_x_continuous(breaks=c(0,6,12,18,24,30,36,42))+
+  ylab("Bray-Curtis Similarity (%)") +
+      theme_classic() +
+        theme(text = element_text(size=12),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=12))
+
+summary(lm(sim~monthlag, data=bcdistlag))
+
+```
+
+
+
+
+
+
+# Figure 6. OTU frequency
+
+```{r}
+
+frequency_otu <- apply(otutable_bac_samples_t,2,function(x)
+  {sum(ifelse(x>0,1,0))})
+mean_otu <- apply(otutable_bac_samples_t,2,mean)
+percent <- data.frame(per=frequency_otu/47*100)
+percent$mean <- mean_otu/40000
+
+length(percent$per[which(percent$per==100)])
+length(percent$per[which(percent$per>75)])/length(percent$per)
+length(percent$per[which(percent$per<25)])/length(percent$per)
+length(percent$per[which(percent$per<75 & percent$per>25)])/length(percent$per)
+
+ggplot(percent, aes(x=per)) +
+  geom_histogram(binwidth = 1, color="black", fill="white") +
+  #scale_y_log10() +
+  xlab("Percent frequency") +
+  ylab("Number of OTUs") +
+  geom_vline(xintercept = c(25,75), linetype="longdash") +
+  annotate("text", x=13.5, y=2800, label="ephemeral \n 89% of OTUs \n 1% of reads", size=3) +
+  annotate("text", x=50, y=2800, label="intermittent \n 8.5% of OTUs \n 2.5% of reads", size=3) +
+  annotate("text", x=87.5, y=2800, label="persistent \n 2.5% of OTUs \n 96.5% of reads", size=3) +
+  theme_classic() +
+          theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+
+
+```
+
+```{r}
+
+# =============== threshold function min ========================
+thresh_filter_min <- function(v,t,c,lt=TRUE){
+  
+  if(lt){
+    table(v < t)['TRUE'] < c
+  } else{
+    table(v < t)['TRUE'] >=c
+  }
+}
+
+thresh_select_min <- function(data,threshold=433, cols=3,lt=TRUE){
+  which(apply(data,2, thresh_filter_min,threshold,cols,lt))
+}
+
+
+# =============== threshold function max ========================
+thresh_filter_max <- function(v,t,c,lt=TRUE){
+  if(lt){
+    table(v >= t)['TRUE'] <=c
+  } else{
+    table(v >= t)['TRUE'] > c
+  }
+  
+}
+
+thresh_select_max <- function(data,threshold=433, cols=3,lt){
+  which(apply(data,2, thresh_filter_max,threshold,cols,lt))
+}
+
+# ===========================================================
+
+# abundant: OTUs that are >0.01, >50% of the time
+# cycling: OTUs that are  >0.01 <50% of the time
+# rare: OTUs that are never > 0.01
+
+idx_abundant <- thresh_select_max(otu.relative.df, 0.01, 23, FALSE)
+length(idx_abundant)
+
+idx_cycling <- thresh_select_max(otu.relative.df, 0.01, 1, FALSE)
+length(idx_cycling)
+
+idx_rare <- thresh_select_min(otu.relative.df, 0.01, 47, TRUE)
+length(idx_rare)
+
+
+
+```
+
+
+
+# Table 2. BIOENV analysis
+```{r}
+
+veg.dist <- vegdist(otutable_bac_samples_t[c(-45,-33),]) # Bray-Curtis
+
+
+# select subset of variable
+bioenv_meta <- meta_df[c(-33,-45), c(21:22,26,28,32:34,37:38)]
+bioenv.dist <- vegdist(scale(bioenv_meta), "euclid")
+b <- bioenv(otutable_bac_samples_t[c(-33,-45),], bioenv_meta, method = "spearman", index = "bray")
+
+# run mantel test
+mantel_meta <- bioenv_meta[,c(1,3,5,9)]
+mantel.dist <- vegdist(scale(bioenv_meta),"euclid")
+m <- mantel(veg.dist, env.dist, method="spear")
+
+
+mantel_meta <- bioenv_meta[,2]
+mantel.dist <- vegdist(scale(bioenv_meta),"euclid")
+m <- mantel(veg.dist, env.dist, method="spear")
+
+
+```
+
+```{r bioenv_individal_seasona}
+
+otutable_bac_samples_t_0910 <- otutable_bac_samples_t[1:7,]
+otutable_bac_samples_t_1011 <- otutable_bac_samples_t[8:18,]
+otutable_bac_samples_t_1112 <- otutable_bac_samples_t[19:29,]
+otutable_bac_samples_t_1213 <- otutable_bac_samples_t[c(30:32,34:44,46:47),]
+
+meta_df_0910 <- meta_df[1:7,c(21:22,26,28,32:34,37:38)]
+meta_df_1011 <- meta_df[8:18,c(21:22,26,28,32:34,37:38)]
+meta_df_1112 <- meta_df[19:29,c(21:22,26,28,32:34,37:38)]
+meta_df_1213 <- meta_df[c(30:32,34:44,46:47),c(21:22,26,28,32:34,37:38)]
+
+b0910 <- bioenv(otutable_bac_samples_t_0910, meta_df_0910, method = "spearman", index = "bray") #Julian_day Leucine Phosphate 0.94
+
+b1011 <- bioenv(otutable_bac_samples_t_1011, meta_df_1011, method = "spearman", index = "bray") # Serial_day DayLength Leucine Phosphate 0.81
+
+b1112 <- bioenv(otutable_bac_samples_t_1112, meta_df_1112, method = "spearman", index = "bray") #DayLength Bacterial_abundance NitrateNitrite Chlorophyll 0.58
+
+b1213 <- bioenv(otutable_bac_samples_t_1213, meta_df_1213, method = "spearman", index = "bray") #Serial_day DayLength Leucine NitrateNitrite Chlorophyll 0.65
+
+
+mds.0910 <- metaMDS(otutable_bac_samples_t_0910, dist="bray", k=2, autotransform=T)
+mds.1011 <- metaMDS(otutable_bac_samples_t_1011, dist="bray", k=2, autotransform=T)
+mds.1112 <- metaMDS(otutable_bac_samples_t_1112, dist="bray", k=2, autotransform=T)
+mds.1213 <- metaMDS(otutable_bac_samples_t_1213, dist="bray", k=2, autotransform=T)
+
+ef0910 <- envfit(mds.0910, meta_df_0910, na.rm=TRUE)
+ef1011 <- envfit(mds.1011, meta_df_1011, na.rm=TRUE)
+ef1112 <- envfit(mds.1112, meta_df_1112, na.rm=TRUE)
+ef1213 <- envfit(mds.1213, meta_df_1213, na.rm=TRUE)
+
+```
+
+
+
+```{r}
+
+meta_chl$Month <- as.factor(meta_chl$Month)
+meta_chl$Month = factor(meta_chl$Month,
+                            levels=c("10","11","12","01","02","03"))
+
+
+g.chl <- ggplot(meta_chl, aes(x=Month, y=Chlorophyll)) +
+    geom_boxplot() +
+    xlab("") + 
+    ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_y_continuous(trans = log10_trans(),
+                       breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+facet.chl <- g.chl + facet_grid(.~studyName, scales = "free")
+
+facet.chl
+    
+
+```
+
+
+# Figure 8. NMDS
+```{r run_the_nmds}
+
+mds.all <- metaMDS(otutable_bac_samples_t, dist="bray", k=2, autotransform=T)
+coded.mds <- cbind(mds.all$points, meta_sorted)
+
+```
+
+
+```{r nmds_manual_panels_PAL0910}
+
+## one color scheme, grey shadows for seasons not featured
+
+# palette: '#d73027','#fc8d59','#fee090','#e0f3f8','#91bfdb','#4575b4'
+# grey = "#d9d9d9"
+
+
+plot.new()
+plot.window(xlim=c(-0.6,0.6), ylim=c(-0.6,0.6))
+axis(1)
+axis(2)
+box()
+
+
+
+# =============== PAL1011 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1112 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1213 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+
+# =============== PAL0910 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+       col="black", bg="#d53e4f", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+       col="black", bg="#fdae61", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+       col="black", bg="#ffffbf", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+       col="black", bg="#a6d96a", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+       col="black", bg="#91bfdb", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+       col="black", bg="#4575b4", pch=21, cex=1.5)
+
+
+
+
+```
+
+
+```{r nmds_manual_panels_PAL1011}
+
+## one color scheme, grey shadows for seasons not featured
+
+# palette: '#d73027','#fc8d59','#fee090','#e0f3f8','#91bfdb','#4575b4'
+# grey = "#d9d9d9"
+
+
+plot.new()
+plot.window(xlim=c(-0.6,0.6), ylim=c(-0.6,0.6))
+axis(1)
+axis(2)
+box()
+
+
+
+
+# =============== PAL0910 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1112 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1213 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+
+
+# =============== PAL1011 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+       col="black", bg="#d53e4f", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+       col="black", bg="#fdae61", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+       col="black", bg="#ffffbf", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+       col="black", bg="#a6d96a", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+       col="black", bg="#abd9e9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+       col="black", bg="#9970ab", pch=21, cex=1.5)
+
+
+```
+
+```{r nmds_manual_panels_PAL1112}
+
+## one color scheme, grey shadows for seasons not featured
+
+# palette: '#d73027','#fc8d59','#fee090','#e0f3f8','#91bfdb','#4575b4'
+# grey = "#d9d9d9"
+
+
+plot.new()
+plot.window(xlim=c(-0.6,0.6), ylim=c(-0.6,0.6))
+axis(1)
+axis(2)
+box()
+
+
+
+
+# =============== PAL0910 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1011 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1213 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+
+# =============== PAL1112 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+       col="black", bg="#d53e4f", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+       col="black", bg="#fdae61", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+       col="black", bg="#ffffbf", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+       col="black", bg="#a6d96a", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+       col="black", bg="#abd9e9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+       col="black", bg="#9970ab", pch=21, cex=1.5)
+
+
+
+```
+
+
+```{r nmds_manual_panels_PAL1213}
+
+## one color scheme, grey shadows for seasons not featured
+
+# palette: '#d73027','#fc8d59','#fee090','#e0f3f8','#91bfdb','#4575b4'
+# grey = "#d9d9d9"
+
+
+plot.new()
+plot.window(xlim=c(-0.6,0.6), ylim=c(-0.6,0.6))
+axis(1)
+axis(2)
+box()
+
+
+
+# =============== PAL0910 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL0910" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1011 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1011" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+# =============== PAL1112 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Oct")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Nov")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Dec")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Jan")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Feb")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1112" 
+                            & coded.mds$Month=="Mar")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+
+# =============== PAL1213 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Oct")], 
+       col="black", bg="#d53e4f", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Nov")], 
+       col="black", bg="#fdae61", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Dec")], 
+       col="black", bg="#ffffbf", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Jan")], 
+       col="black", bg="#a6d96a", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Feb")], 
+       col="black", bg="#abd9e9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+      coded.mds$MDS2[which(coded.mds$Season=="PAL1213" 
+                            & coded.mds$Month=="Mar")], 
+       col="black", bg="#9970ab", pch=21, cex=1.5)
+
+
+
+
+```
+
+## Other NMDS plots (not used)
+
+```{r nmds}
+
+mds.all <- metaMDS(otutable_bac_samples_t, dist="bray", k=2, autotransform=T)
+coded.mds.all <- cbind(mds.all$points, meta_sorted)
+
+coded.mds.all$Month = factor(coded.mds.all$Month,
+                               levels=c("Oct", "Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+
+mds.all <- metaMDS(otutable_bac_samples_t, dist="bray", k=2, autotransform=T)
+coded.mds.all <- cbind(mds.all$points, meta_sorted)
+
+coded.mds.all$Month = factor(coded.mds.all$Month,
+                               levels=c("Oct", "Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+idx_most_common <- thresh_select(otu, 1, 0.86*47)
+# select the indexed rows
+otu.most_common <- otu[,idx_most_common]
+dim(otu.most_common)
+
+mds.most_common <- metaMDS(otu.most_common, dist="bray", k=2, autotransform=T)
+
+coded.mds.most_common <- cbind(mds.most_common$points, meta_sorted)
+
+coded.mds.most_common$Month = factor(coded.mds.most_common$Month,
+                               levels=c("Oct", "Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+
+
+mds.most_abund <- metaMDS(otu.top100.n.df, dist="bray", k=2, autotransform=T)
+
+coded.mds.most_abund <- cbind(mds.most_abund$points, meta_sorted)
+
+coded.mds.most_abund$Month = factor(coded.mds.most_abund$Month,
+                               levels=c("Oct", "Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+
+
+
+```
+
+
+```{r envfit}
+
+meta_df <- as.data.frame(meta_sorted)
+ef_meta <- meta_df[, c(1,20,21,25,27,31:33,36:37)]
+ef <- envfit(mds, ef_meta, na.rm=TRUE)
+
+
+plot(mds.all, display = "sites")
+plot(ef, p.max = 0.1)
+
+ef.df<-as.data.frame(ef$vectors$arrows*sqrt(ef$vectors$r))
+ef.df$factors<-rownames(ef.df)
+ef.df.sig <- ef.df[-(1:3),]
+
+nmds.all <- ggplot(coded.mds.all, aes(x=MDS1, y=MDS2)) +
+  geom_point(data = coded.mds.all, 
+             aes(color = coded.mds.all$Month, shape=coded.mds.all$Season),
+             size=5) +
+  #scale_colour_gradientn(colours=rainbow(4)) +
+  scale_colour_brewer(palette="Spectral",
+                        name="Month") +
+  scale_shape_manual(values=c(15,16,17,18),
+                     name="LTER Season") +
+  geom_segment(data=ef.df.sig,aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
+      arrow = arrow(length = unit(0.5, "cm")),colour="grey") + 
+  geom_text(data=ef.df.sig,aes(x=NMDS1,y=NMDS2,label=factors),size=4)+
+  theme_bw() 
+   #theme(legend.position="bottom",
+    #     legend.box="horizontal")
+  
+
+nmds_most_abund <- ggplot(coded.mds.most_abund, aes(x=MDS1, y=MDS2)) +
+  geom_point(data = coded.mds.most_abund, 
+             aes(color = coded.mds.most_abund$Month, shape=coded.mds.most_abund$Season),
+             size=5, show.legend = FALSE) +
+  #scale_colour_gradientn(colours=rainbow(4)) +
+  scale_colour_brewer(palette="Spectral",
+                        name="Month") +
+  scale_shape_manual(values=c(15,16,17,18),
+                     name="LTER Season") +
+  #geom_segment(data=ef.df.sig,aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
+   #   arrow = arrow(length = unit(0.5, "cm")),colour="grey") + 
+  #geom_text(data=ef.df.sig,aes(x=NMDS1,y=NMDS2,label=factors),size=4)+
+  theme_bw()
+
+nmds_most_common <- ggplot(coded.mds.most_common, aes(x=MDS1, y=MDS2)) +
+  geom_point(data = coded.mds.most_common, 
+             aes(color = coded.mds.most_common$Month, shape=coded.mds.most_common$Season),
+             size=5, show.legend = FALSE) +
+  #scale_colour_gradientn(colours=rainbow(4)) +
+  scale_colour_brewer(palette="Spectral",
+                        name="Month") +
+  scale_shape_manual(values=c(15,16,17,18),
+                     name="LTER Season") +
+  #geom_segment(data=ef.df.sig,aes(x=0,xend=NMDS1,y=0,yend=NMDS2),
+   #   arrow = arrow(length = unit(0.5, "cm")),colour="grey") + 
+  #geom_text(data=ef.df.sig,aes(x=NMDS1,y=NMDS2,label=factors),size=4)+
+  theme_bw()
+  
+
+lay <- rbind(c(1,1,2),
+             c(1,1,3))
+grid.arrange(nmds.all, nmds_most_abund, nmds_most_common,  layout_matrix = lay)
+
+
+nmds.all
+
+```
+
+
+```{r one_axis_nmds}
+
+mds.all <- metaMDS(otutable_bac_samples_t, dist="bray", k=1, autotransform=T)
+coded.mds.all <- cbind(mds.all$points, meta_sorted)
+
+p1.loess <- ggplot(coded.mds.all, 
+                aes(x=Serial_day, y=MDS1, group=Season, color=Season)) +
+  geom_point(na.rm=T, size=1.5) +
+      #geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    #ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p1.line <- ggplot(coded.mds.all, 
+                aes(x=Serial_day, y=MDS1, group=Season, color=Season)) +
+  geom_point(na.rm=T, size=1.5) +
+      geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    #stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    #ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+grid.arrange(p1.line, p1.loess)
+
+
+```
+
+
+
+
+
+
+
+
+
+# Linear regressions: relative abundance vs environmental parameters
+
+```{r linear_model_BP_top100_logit_transformed, echo=FALSE}
+
+nzv <- nearZeroVar(otu.relative, saveMetrics = TRUE)
+
+filtered <- otu.relative[,nzv$nzv==FALSE]
+dim(filtered)
+otu.relative.nzv <- as.data.frame(filtered[order(row.names(filtered)),])
+
+# grabbing top 100 OTUs based on average abundance and then logit transforming
+
+otu.relative.t <- t(otu.relative.nzv)
+#otu.relative.t.df <- as.data.frame(otu.relative.t)
+otu.relative.t.df$average <- apply(otu.relative.t.df, 1, mean)
+# apply index to table to sort according to average relative abundance
+otu.relative.t.df.sort <- otu.relative.t.df[order(-otu.relative.t.df$average),]
+otu.relative.t.df.sort.100 <- otu.relative.t.df.sort[1:100,1:47]
+otu.top100 <- t(otu.relative.t.df.sort.100)
+otu.top100.n <- otu.top100[order(row.names(otu.top100)),] 
+otu.top100.n.df <- as.data.frame(otu.top100.n)
+# 
+otu_meta100 <- cbind(otu.top100.n.df, meta_sorted)
+
+logit <- function(x){-log(-1 + i/(x+1e-6))}
+otu_100.trans <- logit(otu_meta100[,1:100])
+otu_meta100.trans <- cbind(otu_100.trans, meta_sorted)
+
+varlist.trans <- names(otu_meta100.trans)[1:100]
+models100.trans <- lapply(varlist.trans, function(x) {
+    lm(substitute(i ~ Leucine, list(i = as.name(x))), data = otu_meta100.trans)
+})
+
+summary100.trans <- lapply(models100.trans, summary)
+
+pvalues100.trans <- c()
+for(i in 1:100){
+  pvalues100.trans[i] <- pf(summary100.trans[[i]]$fstatistic[1], summary100.trans[[i]]$fstatistic[2], summary100.trans[[i]]$fstatistic[3],
+     lower.tail = FALSE)
+}
+
+rsquared100.trans <- c()
+for(i in 1:100){
+  rsquared100.trans[i] <- summary100.trans[[i]]$adj.r.square
+}
+
+lm_table_otus <- data.frame(pvalues100.trans, rsquared100.trans)
+row.names(lm_table_otus) <- colnames(otu_100.trans)
+
+signif_otus <- subset(lm_table_otus, pvalues100.trans<=0.05)
+dim(signif_otus)
+
+leu_otus <- otu_meta100[,row.names(signif_otus)]
+
+leu_otus <- 
+  leu_otus[order(row.names(leu_otus)), ]
+
+leu_otus_t <- as.data.frame(t(leu_otus))
+
+leu_otus_t$average <- apply(leu_otus_t, 1, mean)
+
+leu_otus_t <- 
+  leu_otus_t[order(-leu_otus_t$average), ]
+
+leu <- t(leu_otus_t[c(1:10),1:47])
+leu_meta <- as.data.frame(cbind(leu, meta_sorted$Leucine, meta_sorted$Season))
+leu_meta <- rename(leu_meta, c(V11="Leucine", V12="Season"))
+
+otus_for_plot_melt <- melt(leu_meta, id=c("Leucine", "Season"))
+colnames(otus_for_plot_melt) <- c("Leucine","Season", "OTU", "Abundance")
+
+otus_for_plot_melt$Leucine <- as.numeric(as.character(otus_for_plot_melt$Leucine))
+otus_for_plot_melt$Abundance <- as.numeric(as.character(otus_for_plot_melt$Abundance))
+
+```
+   
+```{r plot_top_otus_with_BP, echo=FALSE}   
+
+
+
+otu_name <- c(
+    "907828"   = "Polaribacter \n (907828)",
+    "789831"   = "Rhodobacteraceae \n (789831)",
+    "785501"   = "Rhodobacteraceae \n (785501)",
+    "1023473" = "Flavobacteriaceae \n (1023473)",
+    "909231"   = "Flavobacteriaceae \n (909231)",
+    "810446"  = "Colwelliaceae \n (810446)",
+    "1108577"   = "Alphaproteobacteria \n (1108577)",
+    "277620"   = "Flavobacteriaceae \n (277620)",
+    "816454"   = "Flavobacterium \n (816454)",
+    "891587"   = "Alphaproteobacterial \n (891587)"
+)
+
+
+
+p1 <- ggplot(otus_for_plot_melt[1:235,1:4], 
+                aes(x=Leucine, y=Abundance, group=Season, color=Season)) +
+    geom_point(size=1.5) +
+    geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    #stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    #scale_x_continuous(breaks=c(15,45,75,105,135), 
+     #                  labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+         axis.text.y = element_text(size=8),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p1 + facet_grid(OTU~., scales = "free_y", labeller=as_labeller(otu_name))
+
+p2 <- ggplot(otus_for_plot_melt[236:470,1:4], 
+                aes(x=Day, y=Abundance, group=Season, color=Season)) +
+    geom_point(size=1.5) +
+    geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    #stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    scale_x_continuous(breaks=c(15,45,75,105,135), 
+                       labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+        axis.text.y = element_text(size=8),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p2 + facet_grid(OTU~., scales = "free_y", labeller=as_labeller(otu_name))
+
+```
+                                            
+```{r linear_regression_chl}             
+
+varlist.trans <- names(otu_meta100.trans)[1:100]
+models100.trans <- lapply(varlist.trans, function(x) {
+    lm(substitute(i ~ Chlorophyll, list(i = as.name(x))), data = otu_meta100.trans)
+})
+
+summary100.trans <- lapply(models100.trans, summary)
+
+pvalues100.trans <- c()
+for(i in 1:100){
+  pvalues100.trans[i] <- pf(summary100.trans[[i]]$fstatistic[1], summary100.trans[[i]]$fstatistic[2], summary100.trans[[i]]$fstatistic[3],
+     lower.tail = FALSE)
+}
+
+rsquared100.trans <- c()
+for(i in 1:100){
+  rsquared100.trans[i] <- summary100.trans[[i]]$adj.r.square
+}
+
+lm_table_otus <- data.frame(pvalues100.trans, rsquared100.trans)
+row.names(lm_table_otus) <- colnames(otu_100.trans)
+
+signif_otus <- subset(lm_table_otus, pvalues100.trans<=0.05)
+dim(signif_otus)
+
+chl_otus <- otu_meta100[,row.names(signif_otus)]
+
+chl_otus <- 
+  chl_otus[order(row.names(chl_otus)), ]
+
+#chl_otus_t <- as.data.frame(t(chl_otus))
+
+#chl_otus_t$average <- apply(chl_otus_t, 1, mean)
+
+#chl_otus_t <- 
+ # chl_otus_t[order(-chl_otus_t$average), ]
+
+#chl <- t(chl_otus_t[c(1:10),1:47])
+chl_meta <- as.data.frame(cbind(chl_otus, meta_sorted$Chlorophyll, meta_sorted$Season))
+chl_meta <- rename(chl_meta, c("meta_sorted$Chlorophyll"="Chlorophyll", "meta_sorted$Season"="Season"))
+
+otus_for_plot_melt <- melt(chl_meta, id=c("Chlorophyll", "Season"))
+colnames(otus_for_plot_melt) <- c("Chlorophyll","Season", "OTU", "Abundance")
+
+otus_for_plot_melt$Chlorophyll <- as.numeric(as.character(otus_for_plot_melt$Chlorophyll))
+otus_for_plot_melt$Abundance <- as.numeric(as.character(otus_for_plot_melt$Abundance))
+
+```
+   
+```{r plot_top_otus_with_chl, echo=FALSE}   
+
+
+
+otu_name <- c(
+    "907828"   = "Polaribacter \n (907828)",
+    "838668"   = "Pelagibacteraceae \n (838668)",
+    "123001"   = "Pelagibacteraceae \n (123001)",
+    "340144"   = "Piscirickettsiales \n (340144)",
+    "1078197"   = "Piscirickettsiales \n (1078197)",
+    "1023473" = "Flavobacteriaceae \n (1023473)",
+    "556592"  = "Colwelliaceae \n (556592)",
+    "589945"   = "Alphaproteobacteria \n (589945)",
+    "1097408"   = "NS9 \n (1097408)",
+    "140912"   = "Pseudoalteromonas \n (140912)"
+)
+
+
+
+p1 <- ggplot(otus_for_plot_melt[1:235,1:4], 
+                aes(x=Chlorophyll, y=Abundance, group=Season, color=Season)) +
+    geom_point(size=1.5) +
+    #geom_line() +
+    scale_shape_manual(values=c(17,0,19,6)) +
+    scale_color_manual(values=c("#b2182b","#ef8a62","#67a9cf","#2166ac"),
+                       name="LTER Season") +
+    stat_smooth(method = loess, se=FALSE) +
+    xlab("Date") + 
+    ylab("Relative abundance") +
+    #scale_y_continuous(breaks=c(0, 0.05, 0.1)) +
+    #ggtitle("Flavobacteriaceae (1023473)") +
+    #scale_x_continuous(breaks=c(15,45,75,105,135), 
+     #                  labels=c("Nov", "Dec", "Jan", "Feb", "Mar")) +
+   theme_classic() +
+  theme(text = element_text(size=10),
+         axis.text.y = element_text(size=8),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p1 + facet_grid(OTU~., scales = "free_y", labeller=as_labeller(otu_name))
+
+```
+
+
+
+
+
+
+
+
+# Other plots and analyses (not used)
+
+
+## SAM index
+```{r SAM_index, eval=FALSE}
+
+sam <- read.csv("/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/SAM.csv",stringsAsFactors = FALSE)
+
+
+sam$Date <- as.Date(sam$Date)
+
+start2009=as.Date('2009-04-01')
+end2009  =as.Date('2009-09-30')
+start2010=as.Date('2010-04-01')
+end2010  =as.Date('2010-09-30')
+start2011=as.Date('2011-04-01')
+end2011  =as.Date('2011-09-30')
+start2012=as.Date('2012-04-01')
+end2012  =as.Date('2012-09-30')
+start2013=as.Date('2013-04-01')
+end2013  =as.Date('2013-05-01')
+PAL0910label = as.Date('2010-01-01')
+PAL1011label = as.Date('2011-01-01')
+PAL1112label = as.Date('2012-01-01')
+PAL1213label = as.Date('2013-01-01')
+min = as.Date('2009-04-01')
+max = as.Date('2013-05-01')
+
+
+
+
+ggplot(sam, aes(x=Date, y=SAM)) +
+   annotate("rect", 
+           xmin=start2009, xmax=end2009, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=start2010, xmax=end2010, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=start2011, xmax=end2011, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+          xmin=start2012, xmax=end2012, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+   geom_hline(yintercept=0) +
+   annotate("rect", 
+          xmin=start2013, xmax=end2013, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+   geom_hline(yintercept=0) +
+   annotate("text", x = PAL0910label, y = -3, label = "PAL0910", color="black", size = 3, parse=FALSE) +
+  annotate("text", x = PAL1011label, y = -3, label = "PAL1011", color="black", size = 3, parse=FALSE) +
+  annotate("text", x = PAL1112label, y = -3, label = "PAL1112", color="black", size = 3, parse=FALSE) +
+  annotate("text", x = PAL1213label, y = -3, label = "PAL1213", color="black", size = 3, parse=FALSE) +
+    geom_point(shape=20, colour="black") +    
+    geom_line(size=0.5, colour="black") + 
+    #stat_smooth(se=FALSE, size = 0.5, method = "loess") +
+    xlab("Date") + 
+    ylab("Southern Annular Mode Index") +
+    scale_x_date(limits = c(min,max)) +
+    scale_y_continuous(limits = c(-3,4)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+
+
+```
+
+
+## Distributed lag
+
+```{r distributed_lag, eval=FALSE}
+
+### not working
+
+chl <- read.delim("/Users/cmluria/Documents/Documents/Thesis Chapters/DOM/16S_library_analysis/LTER_data/Chlorophyll.csv", sep=",")
+#chl <- chl[-9538,]
+chl2 <- chl[which(chl$studyName=="PAL0910" |
+                  chl$studyName=="PAL1011" |
+                  chl$studyName=="PAL1112" |
+                  chl$studyName=="PAL1213"),]
+chl.b0 <- chl2[which(chl2$Station=="B" & chl2$Depth==0),]
+chl.b0[chl.b0 == -999] <- NA
+chl.b0$Date <- as.Date(as.POSIXct(chl.b0$Datetime.GMT, "%Y-%m-%d %h:%m:%s"),"%Y-%m-%d") 
+
+
+bac <- read.delim("/Users/cmluria/Documents/Documents/Thesis Chapters/PAL LTER 16S Time Series/environmental data/complete datasets as of June 2015/Bacteria_Complete 0809-1314.csv", sep=",")
+#bac <- chl[-9538,]
+bac2 <- bac[which(bac$studyName=="PAL0910" |
+                  bac$studyName=="PAL1011" |
+                  bac$studyName=="PAL1112" |
+                  bac$studyName=="PAL1213"),]
+bac.b0 <- bac2[which(bac2$Station=="B" & bac2$Depth==0),]
+bac.b0[bac.b0 == -999] <- NA
+bac.b0$Date <- as.Date(as.POSIXct(bac.b0$Date.GMT, "%Y-%m-%d"),"%Y-%m-%d") 
+
+
+
+d <- merge(chl.b0, bac.b0, by.x = "Date", by.y = "Date", all.x=FALSE, 
+           all.y=FALSE)
+
+summary(lm(Leucine.Incorp...pmol.L.hr.~Chlorophyll..mg.m.., data=d))
+
+d <- rename(d, c("Leucine.Incorp...pmol.L.hr."="leu", 
+            "Chlorophyll..mg.m.."="chl"))
+
+
+d0910 <- d[which(d$studyName.x=="PAL0910"),]
+d1011 <- d[which(d$studyName.x=="PAL1011"),]
+d1112 <- d[which(d$studyName.x=="PAL1112"),]
+d1213 <- d[which(d$studyName.x=="PAL1213"),]
+
+#===============PAL0910======================
+Leucine0910 <- zoo(d0910$leu,d0910$Date)
+Chl0910 <- zoo(d0910$chl,d0910$Date)
+
+max(d0910$Date) - min(d0910$Date)
+daily_ts0910 <- zoo(0:104,min(d0910$Date)+0:104)
+
+
+clc_ts0910 <- merge(Chl0910, daily_ts0910)
+clc_ts0910 <- merge(Leucine0910, clc_ts0910)
+
+clc_ts0910$Leucine0910 <- na.approx(clc_ts0910$Leucine0910)
+clc_ts0910$Chl0910 <- na.approx(clc_ts0910$Chl0910)
+
+clc_ts0910 <- rename(clc_ts0910, c("Leucine0910"="Leucine", 
+            "Chl0910"="Chl", "daily_ts0910"="daily_ts"))
+
+#===============PAL1011======================
+Leucine1011 <- zoo(d1011$leu,d1011$Date)
+Chl1011 <- zoo(d1011$chl,d1011$Date)
+
+max(d1011$Date) - min(d1011$Date)
+daily_ts1011 <- zoo(0:157,min(d1011$Date)+0:157)
+
+
+clc_ts1011 <- merge(Chl1011, daily_ts1011)
+clc_ts1011 <- merge(Leucine1011, clc_ts1011)
+
+clc_ts1011$Leucine1011 <- na.approx(clc_ts1011$Leucine1011)
+clc_ts1011$Chl1011 <- na.approx(clc_ts1011$Chl1011)
+
+clc_ts1011 <- rename(clc_ts1011, c("Leucine1011"="Leucine", 
+            "Chl1011"="Chl", "daily_ts1011"="daily_ts"))
+
+#===============PAL1112======================
+Leucine1112 <- zoo(d1112$leu,d1112$Date)
+Chl1112 <- zoo(d1112$chl,d1112$Date)
+
+max(d1112$Date) - min(d1112$Date)
+daily_ts1112 <- zoo(0:143,min(d1112$Date)+0:143)
+
+
+clc_ts1112 <- merge(Chl1112, daily_ts1112)
+clc_ts1112 <- merge(Leucine1112, clc_ts1112)
+
+clc_ts1112$Leucine1112 <- na.approx(clc_ts1112$Leucine1112)
+clc_ts1112$Chl1112 <- na.approx(clc_ts1112$Chl1112)
+
+clc_ts1112 <- rename(clc_ts1112, c("Leucine1112"="Leucine", 
+            "Chl1112"="Chl", "daily_ts1112"="daily_ts"))
+
+#===============PAL1213======================
+Leucine1213 <- zoo(d1213$leu,d1213$Date)
+Chl1213 <- zoo(d1213$chl,d1213$Date)
+
+max(d1213$Date) - min(d1213$Date)
+daily_ts1213 <- zoo(0:141,min(d1213$Date)+0:141)
+
+
+clc_ts1213 <- merge(Chl1213, daily_ts1213)
+clc_ts1213 <- merge(Leucine1213, clc_ts1213)
+
+clc_ts1213$Leucine1213 <- na.approx(clc_ts1213$Leucine1213)
+clc_ts1213$Chl1213 <- na.approx(clc_ts1213$Chl1213)
+
+clc_ts1213 <- rename(clc_ts1213, c("Leucine1213"="Leucine", 
+            "Chl1213"="Chl", "daily_ts1213"="daily_ts"))
+
+
+#========================================================
+
+clc_ts <- rbind(clc_ts0910, clc_ts1011, clc_ts1112)
+
+summary(lm(Leucine~Chl, data=d1011))
+summary(lm(log(Leucine)~log(Chl), data=d))
+
+summary(lm(Leucine~Chl, data=clc_ts1112))
+
+model1 <- dynlm(Leucine ~  L(Chl,0) + L(Chl,10) + L(Chl,20), data = clc_ts0910)
+steps1 <- stepAIC(model1, direction="both")
+steps1$anova
+summary(steps1)
+vif(steps1)
+
+summary(lm(Leucine~Chl, data=clc_ts))
+model2 <- dynlm(Leucine ~  L(Chl,0) + L(Chl,10) + L(Chl,20), data = clc_ts1011)
+steps2 <- stepAIC(model2, direction="both")
+steps2$anova
+summary(steps2)
+vif(steps2)
+
+summary(lm(Leucine~Chl, data=clc_ts1213))
+model3 <- dynlm(Leucine ~ L(Chl,0) + L(Chl,5)+ L(Chl,10)+ L(Chl,15)+ L(Chl,20), data = clc_ts1213)
+steps3 <- stepAIC(model3, direction="both")
+steps3$anova
+summary(steps3)
+vif(steps3)
+
+summary(lm(Leucine~Chl, data=clc_ts1112))
+model3 <- dynlm(Leucine ~ L(Chl,0) + L(Chl,5)+ L(Chl,10)+ L(Chl,15)+ L(Chl,20), data = clc_ts1112)
+steps3 <- stepAIC(model3, direction="both")
+steps3$anova
+summary(steps3)
+vif(steps3)
+
+plot(y=d1213$leu, x=d1213$Date, type='p', cex=0.8, ylab="Production (pmol/l/hr)", xlab="Date")
+points(clc_ts1213$Leucine, col="red")
+lines(steps3$index,steps3$fitted.values, col="black", lwd=2)
+#plot(clc_ts$clc_Chla, col = "grey", lwd=2)
+legend("topleft",inset=0.05,legend=c("Measured BP","Modeled BP"),lty=c(NA,1),col=c("black","red"), pch=c(1,NA),lwd=c(0.8,2), bty="n")
+
+plot(x=Chl, y=Leucine, data=clc_ts1213)
+
+```
+
+
+```{r more_distributed_lag, eval=FALSE}
+
+d$Month <- format(d$Date,"%m")
+d$Month <- as.factor(d$Month)
+d$Month = factor(d$Month, levels=c("10","11","12","01","02","03"))
+
+ggplot(d, aes(x=Month, y=Abundance)) +
+    geom_boxplot() +
+    xlab("") + 
+    ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_y_continuous(trans = log10_trans(),
+                       breaks=c(0.3,3.0,30)) +
+    theme_classic() +
+        theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+aov.leu.month= aov(leu~Month,data=d)
+
+summary(aov.leu.month)
+pvalue.obs <- summary(aov.leu.month)[[1]][, 5][1]
+
+h.obs <- TukeyHSD(aov.leu.month, "Month")
+h.obs
+
+```
+
+## Predicted metagenome (not used)
+
+```{r linear_model_for_seasonality_paprica_path, echo=FALSE, eval=FALSE}
+
+path <- data.frame(fread('paprica_path.txt'),row.names = 1)
+
+nzv <- nearZeroVar(path, saveMetrics = TRUE)
+
+path.filtered <- path[,nzv$nzv==FALSE]
+
+path_meta <- cbind(meta_sorted, path.filtered)
+
+### run linear regression on all remaining paths, extract p-values and r-squared
+varlist <- names(path_meta)[39:dim(path_meta)[2]]
+models_path <- lapply(varlist, function(x) {
+    lm(substitute(i ~ DayLength, list(i = as.name(x))), data = path_meta)
+})
+
+summary_path <- lapply(models_path, summary)
+
+pvalues_path <- c()
+for(i in 1:length(summary_path)){
+  pvalues_path[i] <- pf(summary_path[[i]]$fstatistic[1], summary_path[[i]]$fstatistic[2], summary_path[[i]]$fstatistic[3],
+     lower.tail = FALSE)
+}
+
+rsquared_path <- c()
+for(i in 1:length(summary_path)){
+  rsquared_path[i] <- summary_path[[i]]$adj.r.square
+}
+
+
+### make a df that only contains paths with 'significant' p-values
+
+lm_table_path <- data.frame(pvalues_path, rsquared_path)
+row.names(lm_table_path) <- colnames(path.filtered)
+lm_table_path <- na.omit(lm_table_path)
+signif_path <- subset(lm_table_path, pvalues_path<=0.01 & rsquared_path>=0.25)
+dim(signif_path)
+
+path_2 <- path[,row.names(signif_path)]
+day <- meta_sorted$Serial_day
+
+path_2_sort <- path_2[order(day),]
+day_sort <- day[order(day)]
+
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("seasonal_pathways.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(path_2_sort)){
+  y <- path_2_sort[,cn]
+  one <- loess(y~day_sort,span = 0.25)
+  hat <- predict(one)
+  plot(y~day_sort, main=cn)
+  lines(day_sort, hat, col="red")
+  
+  }
+
+par <- opar
+dev.off()
+
+
+
+```
+
+```{r check_for_seasonality_paprica_path_logit_transformed, eval=FALSE}
+
+
+### removed paths with near zero variance
+nzv <- nearZeroVar(path, saveMetrics = TRUE)
+
+path.filtered <- path[,nzv$nzv==FALSE]
+
+### convert to relative abundance (for logit transformation)
+relative <- function(data){
+  csum <- rowSums(data)
+  sweep(data,1,csum,"/") 
+}
+
+path.relative <- relative(path.filtered)
+
+### logit transformation
+logit <- function(x){-log(-1 + i/(x+1e-6))}
+path.trans <- logit(path.relative)
+path_meta.trans <- cbind(meta_sorted, path.trans)
+
+
+### run linear regression on all remaining paths, extract p-values and r-squared
+varlist <- names(path_meta.trans)[39:dim(path_meta.trans)[2]]
+models_path <- lapply(varlist, function(x) {
+    lm(substitute(i ~ DayLength, list(i = as.name(x))), data = path_meta.trans)
+})
+
+summary_path <- lapply(models_path, summary)
+
+pvalues_path <- c()
+for(i in 1:length(summary_path)){
+  pvalues_path[i] <- pf(summary_path[[i]]$fstatistic[1], summary_path[[i]]$fstatistic[2], summary_path[[i]]$fstatistic[3],
+     lower.tail = FALSE)
+}
+
+rsquared_path <- c()
+for(i in 1:length(summary_path)){
+  rsquared_path[i] <- summary_path[[i]]$adj.r.square
+}
+
+
+### make a df that only contains paths with 'significant' p-values
+
+lm_table_path <- data.frame(pvalues_path, rsquared_path)
+row.names(lm_table_path) <- colnames(path.filtered)
+lm_table_path <- na.omit(lm_table_path)
+signif_path <- subset(lm_table_path, pvalues_path<=0.05 & rsquared_path>=0.40)
+dim(signif_path)
+
+path_2 <- path[,row.names(signif_path)]
+day <- meta_sorted$Serial_day
+
+path_2_sort <- path_2[order(day),]
+day_sort <- day[order(day)]
+
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("seasonal_pathways.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(path_2_sort)){
+  y <- path_2_sort[,cn]
+  one <- loess(y~day_sort,span = 0.25)
+  hat <- predict(one)
+  plot(y~day_sort, main=cn)
+  lines(day_sort, hat, col="red")
+  
+  }
+
+par <- opar
+dev.off()
+
+
+
+```
+
+```{r nzv_and_loess_paprica_path, echo=FALSE}
+# ============== filter low variance OTUs ==================
+
+nzv <- nearZeroVar(path.relative, saveMetrics = TRUE)
+
+filtered <- path.relative[,nzv$nzv==FALSE]
+dim(filtered)
+filtered_sort <- as.data.frame(filtered[order(row.names(filtered)),])
+
+
+
+day <- meta_sorted$Serial_day
+
+filtered_sort_sort <- filtered_sort[order(day),]
+day_sort <- day[order(day)]
+
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("loess.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(filtered_sort_sort)){
+  y <- filtered_sort_sort[,cn]
+  one <- loess(y~day_sort,span = 0.25)
+  hat <- predict(one)
+  r_sq_loess <- formatDecimal(cor(y, hat)^2)
+  if(r_sq_loess > 0.5){
+    plot(y~day_sort, main=cn)
+    lines(day_sort, hat, col="red")
+    text(30,0.01,labels=paste(expression(R^2),"=",r_sq_loess), cex=-0.3)
+  }
+}
+par <- opar
+dev.off()
+
+```
+
+
+
+
+## Hierarchical clustering (not used)
+
+```{r, hierarchical_clustering, echo=FALSE, eval=FALSE}
+
+library(ggdendro)
+
+otu <- otutable_bac_samples_t
+
+rownames(otu) <- meta_sorted$SeasonMonth
+
+d <- ecodist::distance(otu, method = "bray")
+
+#set.seed(123)
+hc <- hclust(d)
+dhc <- as.dendrogram(hc)
+
+
+dendr <- dendro_data(hc, type = "rectangle")
+clust    <- cutree(hc,k=6)  # find 5 clusters
+clust.df <- data.frame(label = names(clust), cluster = clust)
+
+cut <- 6    # Number of clusters
+hc <- hclust(d)              # hierarchical clustering
+dendr <- dendro_data(hc, type = "rectangle") 
+clust <- cutree(hc, k = cut)       
+
+# Split dendrogram into upper grey section and lower coloured section
+height <- unique(dendr$segments$y)[order(unique(dendr$segments$y), decreasing = TRUE)]
+cut.height <- mean(c(height[cut], height[cut-1]))
+dendr$segments$line <- ifelse(dendr$segments$y == dendr$segments$yend &
+   dendr$segments$y > cut.height, 1, 2)
+dendr$segments$line <- ifelse(dendr$segments$yend  > cut.height, 1, dendr$segments$line)
+
+# Number the clusters
+dendr$segments$cluster <- c(-1, diff(dendr$segments$line))
+change <- which(dendr$segments$cluster == 1)
+for (i in 1:cut) dendr$segments$cluster[change[i]] = i + 1
+dendr$segments$cluster <-  ifelse(dendr$segments$line == 1, 1, 
+             ifelse(dendr$segments$cluster == 0, NA, dendr$segments$cluster))
+dendr$segments$cluster <- na.locf(dendr$segments$cluster) 
+
+# Consistent numbering between segment$cluster and label$cluster
+clust.df$label <- factor(clust.df$label, levels = levels(dendr$labels$label))
+#clust.df <- arrange(clust.df, label)
+clust.df <- clust.df[order(clust.df$cluster,clust.df$label),]
+clust.df$cluster <- factor((clust.df$cluster), levels = unique(clust.df$cluster), labels = ((1:cut)+1))
+dendr[["labels"]] <- merge(dendr[["labels"]], clust.df, by = "label")
+
+# Positions for cluster labels
+n.rle <- rle(dendr$segments$cluster)
+N <- cumsum(n.rle$lengths)
+N <- N[seq(1, length(N), 2)] + 1
+N.df <- dendr$segments[N, ]
+N.df$cluster <- N.df$cluster - 1
+
+# Plot the dendrogram
+ggplot() + 
+   geom_segment(data = segment(dendr), 
+      aes(x=x, y=y, xend=xend, yend=yend, size=factor(line), colour=factor(cluster)), 
+      lineend = "square", show.legend = FALSE) + 
+   scale_colour_manual(values = c("grey60", rainbow(cut))) +
+   scale_size_manual(values = c(.1, 1)) +
+   geom_text(data = N.df, aes(x = x, y = y, label = factor(cluster),  colour = factor(cluster + 1)), 
+      hjust = 1.5, show.legend = FALSE) +
+   geom_text(data = label(dendr), aes(x, y, label = label, colour = factor(cluster)), 
+       hjust = -0.2, size = 3, show.legend = FALSE) +
+   scale_y_reverse(expand = c(0.2, 0)) + 
+   labs(x = NULL, y = NULL) +
+   coord_flip() +
+    theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid = element_blank())
+
+
+source("http://addictedtor.free.fr/packages/A2R/lastVersion/R/code.R")
+# colored dendrogram
+op = par(bg = "#EFEFEF")
+A2Rplot(hc, k = 3, boxes = FALSE, col.up = "gray50", col.down = c("#FF6B6B", 
+    "#4ECDC4", "#556270"))
+
+
+labs <- label(ddata)
+labs$Season <- as.factor(c("4","4","4","4","2","2","2","2",
+                            "1","1","1","3","3","3","3","3",
+                            "3","4","4","1","1","1","4","3",
+                            "3","3","3","2","2","2","2","2",
+                            "2","4","4","4","4","4","4","4",
+                            "1","3","4","4","4","2","4"))
+labs$Month <- as.factor(c("Nov","Dec","Dec","Dec","Mar",
+                           "Feb","Mar","Mar","Nov","Dec",
+                           "Dec","Jan","Jan","Mar","Mar",
+                           "Mar","Mar","Oct","Nov","Nov",
+                           "Nov","Nov","Nov","Dec","Dec",
+                           "Dec","Dec","Jan","Dec","Jan",
+                           "Jan","Feb","Mar","Feb","Mar",
+                           "Jan","Jan","Feb","Mar","Mar",
+                           "Jan","Jan","Jan","Dec","Dec",
+                           "Feb","Jan"))
+
+
+ggplot(segment(ddata)) +
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(aes(x = x, y = y, label = label, angle = 0, hjust = 0),
+            data= label(ddata), col=labs$Season) +
+  coord_flip() +
+  scale_y_reverse(expand = c(0.2, 0)) +
+  theme_dendro()
+
+```
+
+```{r try_dendextend, eval=FALSE}
+
+
+library(dendextend)
+
+dend <-  otu %>% # take the a vector from 1 to 5
+         ecodist::distance(method = "bray") %>% # calculate a distance matrix, 
+         hclust() %>% # compute hierarchical clustering 
+         as.dendrogram # and lastly, turn that object into a dendrogram.
+
+dend %>% 
+set("labels", c("3","3","3","3","2","2","2","2",
+                    "2","4","4","4","4","1","3","3",
+                    "3","3","3","3","1","1","1","3",
+                    "3","3","3","2","2","2","2","2",
+                    "2","4","4","4","4","4","4","4",
+                    "1","3","4","4","4","2","4")) %>%
+set("labels_cex", 0.5) %>%
+plot(horiz = TRUE)
+
+```
+
+```{r, eval=FALSE}
+
+wss <- (nrow(otutable_bac_samples_t)-1)*sum(apply(mydata,2,var))
+  for (i in 2:15) wss[i] <- sum(kmeans(mydata,
+                                       centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+
+
+```
+
+
+## LOESS curve fitting
+
+```{r nzv_and_loess, echo=FALSE, eval=FALSE}
+# ============== filter low variance OTUs ==================
+
+nzv <- nearZeroVar(otu.relative.abundant, saveMetrics = TRUE)
+
+filtered <- otu.relative.abundant[,nzv$nzv==FALSE]
+dim(filtered)
+filtered_sort <- as.data.frame(filtered[order(row.names(filtered)),])
+
+day <- meta_sorted$Serial_day
+
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("loess.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(filtered_sort)){
+  y <- filtered_sort[,cn]
+  one <- loess(y~day,span = 0.25)
+  hat <- predict(one)
+  r_sq_loess <- formatDecimal(cor(y, hat)^2)
+  if(r_sq_loess > 0.5){
+    plot(y~day, main=cn)
+    #lines(day, hat, col="red")
+    text(30,0.01,labels=paste(expression(R^2),"=",r_sq_loess), cex=-0.6)
+  }
+}
+par <- opar
+dev.off()
+
+```
+
+Nine OTUs matched these criteria:
+
+1001040 (NS9) dropped off mid-season, big rebound at end
+891587 (Alphaproteobacteria) dropped off slightly mid-season, slight rebound at end
+1108577 (Alphaproteobacteria) -- dropped off mid-season, big rebound at end
+339872(Rhodobacteraceae) -- dropped off mid-season, slight rebound at end
+835045 (Rhodobacteraceae) -- dropped off mid-season, big rebound at end, quite scattered
+277620 (Flavobacteraceae) -- big drop off mid-season, slight rebound at end
+919715 (Flammeovirgaceae) -- u shaped curve
+907828 (Polaribacter) -- peaked in Dec, declined as season progressed
+816454 (Flavobacteria) -- increased as season progressed
+
+
