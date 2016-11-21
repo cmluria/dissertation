@@ -1,0 +1,1935 @@
+---
+title: "Palmer_Station_Bacterial_Succesion_Analysis"
+author: "Cat Luria"
+date: "July 6, 2016"
+output:
+  pdf_document:
+    fig_caption: yes
+    keep_tex: yes
+    number_sections: yes
+    toc: yes
+  html_document:
+    toc: yes
+---
+\newpage
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+#knitr::opts_chunk$set(echo = FALSE)
+```
+---
+
+# Preliminary analysis in Qiime
+
+OTU tables were generated in Qiime, using uclust open reference OTU picking, minimum cluster size of 2. Chloroplasts were removed and libraries were rarefied to smallest size.
+
+The final dataset consists of 68 16S rRNA gene sequence libraries generated from samples collected from the seawater intake at Palmer Station, Antarctica from July 2013 through March 2014. There are triplicate libraries from all but 3 sampling dates. The following SWI samples failed during sequencing and were dropped from subsequent analyses:
+
+```
+ LAZPALBv6.PAL05520130824F02: 851.0
+ LAZPALBv6.PAL01420130704F02: 967.0
+ LAZPALBv6.PAL02020130711F02: 968.0
+ LAZPALBv6.PAL01820130711F02: 1001.0
+ LAZPALBv6.PAL01920130711F02: 1058.0
+```
+
+The remaining libraries are summarized below:
+
+```
+Num samples: 68
+Num observations: 28857
+Total count: 15535915
+Table density (fraction of non-zero values): 0.101
+
+Counts/sample summary:
+ Min: 51210.0
+ Max: 548650.0
+ Median: 197541.000
+ Mean: 228469.338
+ Std. dev.: 98371.744
+```
+
+
+# Getting started in R
+
+```{r libraries, echo=FALSE}
+
+#libraries
+library(data.table)
+library(BiodiversityR)
+library(vegan)
+library(ggplot2)
+library(reshape2)
+library(RColorBrewer)
+library(plyr)
+library(scales)
+library(devtools)
+library(iNEXT)
+library(phyloseq)
+library(edgeR)
+library(caret)
+library(grid)
+library(gridExtra)
+library(ellipse)
+library(phyloseq)
+library(gtable)
+library(dynlm)
+library(MASS)
+library(zoo)
+library(car)
+
+
+```
+
+```{r multiplot_function, echo=FALSE}
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+# Import main OTU table and ancillary data
+
+```{r get_data, echo=FALSE}
+
+setwd("/Users/cmluria/Documents/Documents/Thesis Chapters/SWI")
+
+otutable_bac <- fread('otus/cdout_SWI_bac/otu_table_mc2_SWI_even43308_bac_from_biom.txt', skip=1)
+
+otutable_bac_unrar <- fread('otus/otu_table_mc2_w_tax_no_pynast_failures_min_SWI_chlor_gone_from_biom.txt', skip=1)
+
+# ============== manipulate rarefied OTU table ==================
+#convert the otu table to a data frame
+otutable_bac <- as.data.frame(otutable_bac)
+#grab the columns with data
+otutable_bac_samples <- otutable_bac[,(2:69)]
+#transpose
+otutable_bac_samples_t <- t(otutable_bac_samples)
+#use column 1 from original table as column names in new table
+colnames(otutable_bac_samples_t) <- otutable_bac[,1]
+
+new_otutable_bac_samples_t <- 
+  otutable_bac_samples_t[order(row.names(otutable_bac_samples_t)), ]
+otutable_bac_samples_t <- as.data.frame(new_otutable_bac_samples_t)
+
+# ============== manipulate unrarefied OTU table ===============
+#convert the otu table to a data frame
+otutable_bac_unrar <- as.data.frame(otutable_bac_unrar)
+#grab the columns with data
+otutable_bac_unrar_samples <- otutable_bac_unrar[,(2:69)]
+#transpose
+otutable_bac_unrar_samples_t <- t(otutable_bac_unrar_samples)
+#use column 1 from original table as column names in new table
+colnames(otutable_bac_unrar_samples_t) <- otutable_bac_unrar[,1]
+
+new_otutable_bac_unrar_samples_t <- 
+  otutable_bac_unrar_samples_t[order(row.names(otutable_bac_unrar_samples_t)), ]
+otutable_bac_unrar_samples_t <- as.data.frame(new_otutable_bac_unrar_samples_t)
+
+
+# ================ get metadata ========================
+
+meta <- fread('SWI.map.txt') # our main ancillary data file
+idx_meta <- order(meta$'#SampleID', decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+
+bp_chla <- fread('complete_leucine_chla.txt') 
+# a separate file that contains ALL available BP and Chla data, not just dates that correspond to sequence library
+schofield_chl <- fread('Schofield_chlorophyll.txt')
+# a separate files that contains SWI Chla data routinely collected by Schofield LTER group
+# more consistent collection over time, better for plotting purposes
+
+lag_chl <- fread('chlor_lag.txt')
+
+```
+
+
+# Figure 1. Chlorophyll a, bacterial production, and OTU richness
+
+```{r multiplot_richness_three-taxa_BP_Chla_for_paper_2, echo=FALSE, fig.cap="Chlorophyll a, bacterial production, and OTU richness, July 2013-March 2014, Palmer Station SWI. Meansare shown for each date. Error bars represent standard error. The period of peak phytoplankton activity is highlighted.", fig.width=5, fig.height=10}
+
+richness <- diversityresult(otutable_bac_samples_t, 
+                              index='richness', method='s')
+richness_meta <- cbind(meta_sorted, richness)
+
+sddata <- ddply(richness_meta, "SamplingDate", summarise,
+                 N.obs    = length(richness),
+                 mean.obs = mean(richness),
+                 sd.obs   = sd(richness),
+                 se.obs   = sd.obs / sqrt(N.obs))
+
+
+sddata$SamplingDate <- as.Date(sddata$SamplingDate,"%m/%d/%y")
+
+min <- min(as.Date(sddata$SamplingDate))
+max <- max(as.Date(sddata$SamplingDate))
+bloom.min <- as.Date("2013-12-25")
+bloom.max <- as.Date("2014-2-28")
+
+
+extractmax.rich.obs <- max(sddata$mean.obs)
+labelheight.rich.obs <- extractmax.rich.obs*0.95
+
+g.rich.obs <-ggplot(sddata, aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.obs), shape=20, na.rm=T, size=1.5, colour="black") +    
+    geom_errorbar(aes(ymin=mean.obs-se.obs, ymax=mean.obs+se.obs), 
+                  width=.3, colour="black") +
+    geom_line(aes(y=mean.obs), size=0.5, colour="black") + 
+    xlab("") + 
+    ylab("Number of OTUs") +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  scale_y_continuous(breaks=c(600,900,1200,1500,1800)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="C", x=as.Date('2014-03-10'), y=labelheight.rich.obs, size=4) +
+    theme_classic() +
+  theme(text = element_text(size=8),
+        legend.text=element_text(size=8),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+bcdata <- ddply(bp_chla[which(bp_chla$Station=="SWI"),], "Date", summarise,
+                 N.leu    = length(Leucine),
+                 mean.leu = mean(Leucine),
+                 sd.leu   = sd(Leucine),
+                 se.leu   = sd.leu / sqrt(N.leu),
+                 N.chl    = length(Chla),
+                 mean.chl = mean(Chla),
+                 sd.chl   = sd(Chla),
+                 se.chl   = sd.chl / sqrt(N.chl))
+
+
+bcdata$Date <- as.Date(bcdata$Date,"%m/%d/%y")
+
+min <- min(as.Date(bcdata$Date))
+max <- max(as.Date(bcdata$Date))
+bloom.min <- as.Date("2013-12-25")
+bloom.max <- as.Date("2014-2-28")
+
+extractmax.leucine <- max(bcdata$mean.leu, na.rm=TRUE)
+labelheight.leucine <- extractmax.leucine*0.95
+
+g.leucine <- ggplot(bcdata, aes(x=Date)) +
+    geom_point(aes(y=mean.leu), shape=20, na.rm=T, size=1.5, colour="black") +    
+    geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), 
+                  width=.3, colour="black") +
+    geom_line(aes(y=mean.leu), size=0.5, colour="black") + 
+    xlab("") + 
+    ylab(expression(paste("Production (pmol ", l^{-1}, hour^{-1},")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="B", x=as.Date('2014-03-10'), y=labelheight.leucine, size=4) +
+    theme_classic() +
+    theme(text = element_text(size=8),
+        legend.text=element_text(size=8),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+#g.leucine
+
+extractmax.chl <- max(bcdata$mean.chl, na.rm=TRUE)
+labelheight.chl <- extractmax.chl*0.95
+
+schofield_chl$Date <- as.Date(schofield_chl$Date,"%m/%d/%y")
+
+g.chl.scho <- ggplot(schofield_chl, aes(x=Date)) +
+    geom_point(aes(y=Chlorophyll), shape=20, na.rm=T, size=1.5, colour="black") +    
+    geom_line(aes(y=Chlorophyll), size=0.5, colour="black") + 
+    xlab("") + 
+    ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="A", x=as.Date('2014-03-10'), y=labelheight.chl, size=4) +
+    theme_classic() +
+  theme(text = element_text(size=8),
+        legend.text=element_text(size=8),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+
+panel.chl <- ggplot_gtable(ggplot_build(g.chl.scho))
+panel.leu <- ggplot_gtable(ggplot_build(g.leucine))
+panel.rich.obs <- ggplot_gtable(ggplot_build(g.rich.obs))
+
+maxWidth = grid::unit.pmax(panel.chl$widths[2:3], panel.leu$widths[2:3], 
+                     panel.rich.obs$widths[2:3])
+ 
+panel.chl$widths[2:3] <- maxWidth
+panel.leu$widths[2:3] <- maxWidth
+panel.rich.obs$widths[2:3] <- maxWidth
+
+
+grid.arrange(panel.chl, panel.leu, panel.rich.obs, heights = c(2, 2,2), 
+             bottom="Date")
+
+```
+
+```{r multiplot_richness_BP_Chla_small_insets, fig.cap="Small insets for the preceding figure, highlighting early season activity.", echo=FALSE}
+
+small.min <- as.Date("2013-8-15")
+small.max <- as.Date("2013-12-25")
+
+
+
+g.chl.small.scho <-ggplot(schofield_chl[!is.na(schofield_chl$Chlorophyll),], aes(x=Date)) +
+    geom_point(aes(y=Chlorophyll), shape=20, na.rm=T, size=1.5, colour="black") +    
+    #geom_errorbar(aes(ymin=mean.chl-se.chl, ymax=mean.chl+se.chl), 
+     #             width=.3, colour="black") +
+    geom_line(aes(y=Chlorophyll), size=0.5, colour="black") + 
+    xlab("") + 
+    ylab("") +
+    scale_x_date(date_breaks="2 months", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  #annotate("rect", 
+   #        xmin=bloom.min, xmax=bloom.max, 
+    #       ymin=-Inf,ymax=Inf, alpha = .1) +
+  #annotate("text", label="A", x=as.Date('2013-07-10'), y=labelheight.chl, size=4) +
+  ylim(c(0,3)) +
+  xlim(c(small.min, small.max)) +
+    theme_classic() +
+  theme(text = element_text(size=16),
+        legend.text=element_text(size=16),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+g.leu.small <-ggplot(bcdata[!is.na(bcdata$mean.leu),], aes(x=Date)) +
+    geom_point(aes(y=mean.leu), shape=20, na.rm=T, size=1.5, colour="black") +    
+    geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), 
+                  width=.3, colour="black") +
+    geom_line(aes(y=mean.leu), size=0.5, colour="black") + 
+    xlab("") + 
+    ylab("") +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%m/%d",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  #annotate("text", label="A", x=as.Date('2013-07-10'), y=labelheight.chl, size=4) +
+  ylim(c(0,18)) +
+  xlim(c(small.min, small.max)) +
+    theme_classic() +
+  theme(text = element_text(size=16),
+        legend.text=element_text(size=16),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+panel.chl.small <- ggplot_gtable(ggplot_build(g.chl.small.scho))
+panel.leu.small <- ggplot_gtable(ggplot_build(g.leu.small))
+
+maxWidth = grid::unit.pmax(panel.chl.small$widths[2:3], panel.leu.small$widths[2:3])
+ 
+panel.chl.small$widths[2:3] <- maxWidth
+panel.leu.small$widths[2:3] <- maxWidth
+
+
+grid.arrange(panel.chl.small, panel.leu.small, heights = c(2, 2), 
+             bottom="Date")
+
+
+```
+
+# Figure 2. Aggregated taxa plot
+
+```{r set_up_agg_taxa_table, echo=FALSE}
+
+tdt <- function(inpdt){
+  transposed <- t(inpdt[,-1,with=F]);
+  colnames(transposed) <- inpdt[[1]];
+  transposed <- data.table(transposed, keep.rownames=T);
+  setnames(transposed, 1, names(inpdt)[1]);
+  return(transposed);
+}
+
+# read in the taxa table and order by sample number
+taxaL6 <- fread("otus/cdout_SWI_bac/taxa_plots/table_mc43308_sorted_L6.txt", skip=1)
+taxaL6.transpose <- tdt(taxaL6)
+idx_taxa <- order(taxaL6.transpose$'#OTU ID', decreasing=FALSE)
+taxa_sorted <- taxaL6.transpose[idx_taxa]
+
+# convert to data frame and transpose again
+taxa_sorted.df <- as.data.frame(taxa_sorted)
+taxa_t <- t(taxa_sorted.df[,-1])
+colnames(taxa_t) <- taxa_sorted.df[,1]
+
+# get row means
+taxa_t <- as.data.frame(taxa_t)
+
+myselection <- data.frame(idx=1:1060)
+myselection$name <- 'Other'
+myselection$name[5:29] <- 'p__Acidobacteria'
+myselection$name[30:40] <- 'p__Actinobacteria;c__Acidimicrobiia;o__Acidimicrobiales'
+myselection$name[41:111] <- 'p__Actinobacteria;c__Actinobacteria;o__Actinomycetales'
+myselection$name[112:128] <- 'p__Actinobacteria (Other)'
+myselection$name[134:160] <- 'p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales'
+myselection$name[c(161:176,185:188)] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales (Other)'
+myselection$name[177:184] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales;f__Flammeovirgaceae'
+myselection$name[c(189,190,225:231,198:204,206:216,218:223,205)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales (Other)'
+myselection$name[191:197] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Cryomorphaceae'
+#myselection$name[c(198:204,206:216,218:223)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae (Other)'
+myselection$name[217] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Polaribacter'
+#myselection$name[205] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Flavobacterium'
+myselection$name[224] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__NS9'
+myselection$name[c(131:133,232:257)] <- 'p__Bacteroidetes (Other)'
+myselection$name[274:293] <- 'p__Chloroflexi'
+myselection$name[327:447] <- 'p__Firmicutes'
+myselection$name[448:453] <- 'p__Fusobacteria'
+myselection$name[491:499] <- 'p__Nitrospirae'
+myselection$name[518:545] <- 'p__Planctomycetes'
+myselection$name[548:592] <- 'p__Proteobacteria;c__Alphaproteobacteria (Other)'
+myselection$name[593:610] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodobacterales;f__Rhodobacteraceae'
+myselection$name[611:620] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodospirillales'
+myselection$name[622] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales;f__Pelagibacteraceae'
+myselection$name[c(621,623:625)] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales (Other)'
+myselection$name[627:641] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Sphingomonadales'
+myselection$name[644:666] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales'
+myselection$name[673:675] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Neisseriales'
+myselection$name[c(687:695,714:743,745:748,750:755)] <- 'p__Proteobacteria;c__Deltaproteobacteria'
+myselection$name[696:712] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales (Other)'
+myselection$name[c(744,749)] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__SAR324'
+myselection$name[713] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales;f__Nitrospinaceae;g__Nitrospina'
+myselection$name[c(930:944,884:903,767:774,799,814:841,845:862)] <- 'p__Proteobacteria;c__Gammaproteobacteria (Other)'
+myselection$name[c(775:794,802:807,809:813)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales (Other)'
+myselection$name[795:798] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Colwelliaceae'
+myselection$name[808] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Psychromonadaceae;g__Psychromonas'
+myselection$name[c(800,801,842:844)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__HTCC2188'
+myselection$name[c(863:868,874:883, 869:873)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales'
+#myselection$name[c(863:868,874:883)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales (Other)' # combine with Halamonadaceae above
+#myselection$name[869:873] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales;f__Halomonadaceae' # combine with Oceanospirillales above
+myselection$name[c(904:905,911:919)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales (Other)'
+myselection$name[906:910] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales;f__Piscirickettsiaceae'
+myselection$name[920:929] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Vibrionales'
+myselection$name[949:962] <- 'p__SAR406'
+myselection$name[978:984] <- 'p__TM6'
+myselection$name[965:977] <- 'p__Spirochaetes'
+myselection$name[985:989] <- 'p__TM7'
+myselection$name[990:1000] <- 'p__Tenericutes'
+myselection$name[1003:1045] <- 'p__Verrucomicrobia'
+
+taxa_t$mygrp <- myselection$name
+
+agg1 <- by(taxa_t, taxa_t$mygrp, function(x) colSums(x[,1:68]))
+agg2 <- do.call(rbind,as.list(agg1))
+agg2 <- data.frame(cbind(agg2,avg=rowSums(agg2)/NCOL(agg2)))
+
+# apply index to table to sort according to average relative abundance
+idx <- order(agg2$avg, decreasing = TRUE)
+agg2_sorted <- agg2[idx, ]
+
+```
+
+```{r aggregated_taxa_plot, echo=FALSE, fig.cap="Relative abundance of select taxa, July 2013-March 2014.", fig.width=7, fig.height=10}
+
+Other <- colSums(agg2_sorted[c(7,11,12,20:45),(1:68)])
+
+#transpose yet again, rename rows, keep only top 11 taxa and add Other column
+agg2_sorted_t <- t(agg2_sorted[,-(69)])
+rownames(agg2_sorted_t) <- meta_sorted$Month
+agg2_sorted_t_other<-agg2_sorted_t[,c(1:6,8:10,13:19)]
+agg2_sorted_t_other <- cbind(agg2_sorted_t_other, Other)
+#convert data to long format for stacked bar plot
+agg2_sorted_melt <- melt(agg2_sorted_t_other)
+colnames(agg2_sorted_melt) <- c("Month", "Taxa", "RelativeAbundance")
+
+#summarize data
+tdata <- ddply(agg2_sorted_melt, c("Month", "Taxa"), summarise,
+               N = length(RelativeAbundance),
+               mean = mean(RelativeAbundance),
+               sd   = sd(RelativeAbundance),
+               se   = sd / sqrt(N)
+)
+
+
+getPalette = colorRampPalette(brewer.pal(9, "Set1"))
+
+labl <- list("Pelagibacteraceae", "Rhodobacteraceae",
+                             "Flavobacteriales", 
+                             expression(italic("Polaribacter")), 
+                             "Oceanospirillales", "Alteromonadales",
+                             "Colwelliaceae", "Piscirickettsiales",
+                             "Flammeovirgaceae", "Cryomorphaceae",
+                              "NS9", "SAR324", "HTCC2188",
+                              expression(italic("Nitrospina")),
+                             "Rhodospirillales", "SAR406", "Other")
+
+ggplot(data = tdata, aes(x = Month, y = mean, fill = Taxa)) + 
+  geom_bar(stat="identity", colour="black", size=0.1) +
+   scale_fill_manual(values = getPalette(17),                  
+                    guide = guide_legend(reverse=TRUE),
+                    labels= labl) +
+  scale_x_discrete(labels=c("July","Aug","Sept","Oct","Nov","Dec","Jan","Feb","Mar")) +
+  ylab("Relative abundance") +
+  theme_bw() +
+  theme(text = element_text(size=12),
+        axis.text.x = element_text(vjust=1),
+        legend.direction="vertical",
+        legend.text=element_text(size=10))
+
+```
+
+
+# Figure 3. OTU succession plot
+
+```{r local_regression, fig.cap="Identifying optimum number of clusters for k-means clustering.", echo=FALSE}
+
+# =================== set up data =======================
+
+otu_table_mc2_SWI_even43308_bac_from_biom <- read.delim("otus/cdout_SWI_bac/otu_table_mc2_SWI_even43308_bac_from_biom.txt", comment.char="#", stringsAsFactors = FALSE, skip=1)
+
+otu <- t(otu_table_mc2_SWI_even43308_bac_from_biom[2:69])
+colnames(otu) <- otu_table_mc2_SWI_even43308_bac_from_biom$OTUID
+
+# ============ convert to relative abundance===============
+
+relative <- function(data){
+  csum <- rowSums(data)
+  sweep(data,1,csum,"/") 
+}
+
+otu.relative <- relative(otu)
+
+# =============== threshold function ========================
+thresh_filter <- function(v,t,c){
+  table(v >= t)['TRUE'] >=c
+}
+
+thresh_select <- function(data,threshold=1, cols=34){
+  which(apply(data,2, thresh_filter,threshold,cols))
+}
+
+# =============== filter out low abundance OTUs ====================
+
+# get index (row number) where condition matches
+idx_abundant <- thresh_select(otu.relative, 0.01, 3)
+# select the indexed rows
+otu.relative.abundant <- otu.relative[,idx_abundant]
+dim(otu.relative.abundant)
+
+# ============== filter low variance OTUs ==================
+
+nzv <- nearZeroVar(otu.relative.abundant, saveMetrics = TRUE)
+
+filtered <- otu.relative.abundant[,nzv$nzv==FALSE]
+dim(filtered)
+filtered_sort <- as.data.frame(filtered[order(row.names(filtered)),])
+
+day <- meta_sorted$LoessDay
+
+# =========================== LOESS ========================
+
+rsqfiltered <- c()
+rsqnames <- c()
+formatDecimal <- function(x, k=4) format(round(x, k), trim=T, nsmall=k)
+opar <- par()
+pdf("loess.pdf",height = 11, width = 8)
+par(mfrow=c(4,3))
+for (cn in colnames(filtered_sort)){
+  y <- filtered_sort[,cn]
+  one <- loess(y~day,span = 0.25)
+  hat <- predict(one)
+  r_sq_loess <- formatDecimal(cor(y, hat)^2)
+  if(r_sq_loess > 0.8){
+    rsqnames <- c(rsqnames,cn)
+    rsqfiltered <- cbind(rsqfiltered, y)
+    plot(y~day, main=cn)
+    lines(day, hat, col="red")
+    text(30,0.01,labels=paste(expression(R^2),"=",r_sq_loess), cex=-0.6)
+  }
+}
+colnames(rsqfiltered) <- rsqnames
+par <- opar
+dev.off()
+
+
+
+# ===================== find optimum k ========================
+
+mydata <- t(rsqfiltered)
+wss <- (nrow(mydata)-1)*sum(apply(mydata,2,var))
+  for (i in 2:15) wss[i] <- sum(kmeans(mydata,
+                                       centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+
+
+k5 <- kmeans(rsqfiltered, centers=5)
+
+
+# =================== export data for cytoscape =====================
+
+write.csv(rsqfiltered, "swi_loess_otus.csv")
+
+```
+
+To identify significant OTUs with seasonal patterns, I first selected OTUs with a relative abundance greater than 0.01 in at least three samples. I assessed the seasonality of this subset through local polynomial regression (LOESS) with serial day as the independent variable and relative abundance as the dependent variable, using R2 > 0.8 as a threshold to identify OTUs with non-random temporal patterns. 
+
+Out of 12K OTUs, only about 5K make up at least 1% of the community in at least three samples. Out of the 12K OTUs, about 8K had a very low coefficient of variation. 4061 OTUs meet both criteria. Of these, only 39 had an R-squared >0.8.
+
+For these OTUs, I found the optimum number of clusters by plotting cluster number against within groups sum of squares, visually selecting the “elbow." I exported the data and performed k-means clustering on a co-occurrence network based on Pearson’s correlation using CoNet and clusterMaker in Cytoscape. This helped me identify groups of OTUs with similar temporal trends.
+
+```{r select_important_OTUs_2, echo=FALSE}
+
+## filter out top 10 OTUs for every library, compare against OTUs id'ed in previous analysis
+
+otu_table_mc2_SWI_even43308_bac_from_biom <- read.delim("otus/cdout_SWI_bac/otu_table_mc2_SWI_even43308_bac_from_biom.txt", comment.char="#", stringsAsFactors = FALSE, skip=1)
+
+otu_table_mc2_SWI_even43308_bac_from_biom.normalised <-
+  cbind(OTUID=otu_table_mc2_SWI_even43308_bac_from_biom$OTUID,
+        otu_table_mc2_SWI_even43308_bac_from_biom[,2:69]/colSums(otu_table_mc2_SWI_even43308_bac_from_biom[,2:69]),
+        taxonomy=otu_table_mc2_SWI_even43308_bac_from_biom$taxonomy)
+
+topn <- function(x,rowname,n=10){
+  rowname <- rowname[order(-x)]
+  rowname[1:n]
+}
+
+top10 <- apply(otu_table_mc2_SWI_even43308_bac_from_biom[,2:69],2,topn,
+       otu_table_mc2_SWI_even43308_bac_from_biom$OTUID,10)
+ 
+toprows <- unique(c(top10))
+
+extractrows <- function(x,rownames,toprows){
+  a <- c()
+  for(r in toprows){
+    a <- c(a,x[rownames==r])
+  }
+  a
+}
+
+topotu <- apply(otu_table_mc2_SWI_even43308_bac_from_biom.normalised[,2:69],2,extractrows,
+                otu_table_mc2_SWI_even43308_bac_from_biom.normalised$OTUID,toprows)
+
+rownames(topotu) <- toprows
+
+cname <- colnames(topotu)
+colnames(topotu) <- as.numeric(substr(cname,17,24))
+
+extracttaxa <- function(x,rownames){
+  a <- c()
+  for(r in rownames){
+    a <- c(a,x[x$OTUID==r,"taxonomy"])
+  }
+  a
+}
+
+toptaxonnomy <- extracttaxa(otu_table_mc2_SWI_even43308_bac_from_biom,toprows)
+
+toptaxonnomy <- paste(toprows,"(",toptaxonnomy,")")
+
+topotu.t <- t(topotu)
+colnames(topotu.t) <- toptaxonnomy
+topotu.t.melt <- melt(topotu.t)
+colnames(topotu.t.melt) <- c("SamplingDate", "OTU", "Abundance")
+
+```
+
+```{r otu_succession_figure, fig.cap="Representative OTUs from five network clusters based on Pearson correlation.", echo=FALSE}
+
+# ===================== set up palette ===============================
+
+p1 <- c('#fb9a99','#99000d','#e31a1c')
+p2 <- c('#1b7837','#a6dba0','#c2a5cf')
+p3 <- c('#c994c7','#e7298a','#91003f')
+p4 <- c('#0c2c84','#1d91c0','#7fcdbb')
+p5 <- c('#8c2d04','#ec7014','#fec44f')
+
+# ===================== Panel 1 ===============================
+
+## select OTUs
+
+topotu.t.melt.s1 <- topotu.t.melt[c(341:408,        #1016465 (Pelagibacteraceae)
+                                      1361:1428,      #837879 (SAR324)
+                                     2041:2108      #936371 (Nitrospina)
+                                      ),]
+## melt data
+
+topotu.data.s1 <- ddply(topotu.t.melt.s1, c("SamplingDate", "OTU"), summarise,
+               N = length(Abundance),
+               mean = mean(Abundance),
+               sd   = sd(Abundance),
+               se   = sd / sqrt(N)
+)
+
+# make sure sampling dates are right, set sum parameters
+
+topotu.data.s1$SamplingDate <- as.character(topotu.data.s1$SamplingDate)
+topotu.data.s1$SamplingDate <- as.Date(topotu.data.s1$SamplingDate,format = "%Y%m%d")
+
+min <- min(as.Date(topotu.data.s1$SamplingDate))
+max <- max(as.Date(topotu.data.s1$SamplingDate))
+bloom.min <- as.Date("2013-12-25")
+bloom.max <- as.Date("2014-2-28")
+
+extractmax.s1 <- max(topotu.data.s1$mean)
+labelheight1 <- extractmax.s1*0.9
+
+# plot
+
+label.s1 <- list("1016465 (Pelagibacteraceae)",
+                 "837879 (SAR324)",
+                 expression(paste("936371 (", italic("Nitrospina"),")")))
+
+top.s1 <- ggplot(data = topotu.data.s1, 
+                           aes(x = SamplingDate, y = mean, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  geom_errorbar(aes(y = mean, ymin=mean-se, 
+                    ymax=mean+se, na.rm=T), 
+                width=.1) +
+  scale_colour_manual(values=p1,
+                      labels=label.s1
+                               ) +
+  scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=0,ymax=Inf, alpha = .1) +
+  annotate("text", label="A", x=as.Date('2013-07-10'), y=labelheight1) +
+  xlab("") + 
+  ylab("") +
+  theme_classic() +
+  theme(text = element_text(size=10),
+        legend.text=element_text(size=10),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+# ===================== Panel 2 ===============================
+
+topotu.t.melt.s2 <- topotu.t.melt[c(477:544,       #919715 (Flammeovirgaceae)
+                                     1089:1156       #1023473 (Flavobacteriaceae)
+                                    ),]
+
+topotu.data.s2 <- ddply(topotu.t.melt.s2, c("SamplingDate", "OTU"), summarise,
+               N = length(Abundance),
+               mean = mean(Abundance),
+               sd   = sd(Abundance),
+               se   = sd / sqrt(N)
+)
+
+topotu.data.s2$SamplingDate <- as.character(topotu.data.s2$SamplingDate)
+topotu.data.s2$SamplingDate <- as.Date(topotu.data.s2$SamplingDate,format = "%Y%m%d")
+
+extractmax.s2 <- max(topotu.data.s2$mean)
+labelheight2 <- extractmax.s2*0.9
+
+min <- min(as.Date(topotu.data.s2$SamplingDate))
+max <- max(as.Date(topotu.data.s2$SamplingDate))
+bloom.min <- as.Date("2013-12-25")
+bloom.max <- as.Date("2014-2-28")
+
+top.s2 <- ggplot(data = topotu.data.s2, 
+                           aes(x = SamplingDate, y = mean, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  geom_errorbar(aes(y = mean, ymin=mean-se, 
+                    ymax=mean+se, na.rm=T), 
+                width=.1) +
+  scale_colour_manual(values=p2,
+                      labels=c("919715 (Flammeovirgaceae)",
+                                "1023473 (Flavobacteriaceae)")
+                      ) +
+  scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=0,ymax=Inf, alpha = .1) +
+  annotate("text", label="B", x=as.Date('2013-07-10'), y=labelheight2) +
+  xlab("") + 
+   ylab("") +
+  theme_classic() +
+   theme(text = element_text(size=10),
+        legend.text=element_text(size=10),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+
+# ===================== Panel 3 ===============================
+
+topotu.t.melt.s3 <- topotu.t.melt[c(1:68,           #907828 (Polaribacter)
+                                      2177:2244       #253659 (Rhodobacteraceae)
+                                    ),]
+
+topotu.data.s3 <- ddply(topotu.t.melt.s3, c("SamplingDate", "OTU"), summarise,
+               N = length(Abundance),
+               mean = mean(Abundance),
+               sd   = sd(Abundance),
+               se   = sd / sqrt(N)
+)
+
+topotu.data.s3$SamplingDate <- as.character(topotu.data.s3$SamplingDate)
+topotu.data.s3$SamplingDate <- as.Date(topotu.data.s3$SamplingDate,format = "%Y%m%d")
+
+label.s3 <- list(expression(paste("907828 (", italic("Polaribacter"), ")")),
+                               "253659 (Rhodobacteraceae)")
+
+extractmax.s3 <- max(topotu.data.s3$mean)
+labelheight3 <- extractmax.s3*0.9
+
+top.s3 <- ggplot(data = topotu.data.s3, 
+                           aes(x = SamplingDate, y = mean, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  geom_errorbar(aes(y = mean, ymin=mean-se, 
+                    ymax=mean+se, na.rm=T), 
+                width=.1) +
+  scale_colour_manual(values=p3,
+                      labels=label.s3
+                               ) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=0,ymax=Inf, alpha = .1) +
+  annotate("text", label="C", x=as.Date('2013-07-10'), y=labelheight3) +
+  xlab("") + 
+   ylab("Relative Abundance") +
+  theme_classic() +
+   theme(text = element_text(size=10),
+        legend.text=element_text(size=10),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+# ===================== Panel 4 ===============================
+
+topotu.t.melt.s4 <- topotu.t.melt[c(749:816,       #786176 (Rhodobacteraceae)
+                                    1837:1904,         #538602 (Shewanella)
+                                    2313:2380       #810446 (Colwelliaceae)
+                                      ),]
+
+topotu.data.s4 <- ddply(topotu.t.melt.s4, c("SamplingDate", "OTU"), summarise,
+               N = length(Abundance),
+               mean = mean(Abundance),
+               sd   = sd(Abundance),
+               se   = sd / sqrt(N)
+)
+
+topotu.data.s4$SamplingDate <- as.character(topotu.data.s4$SamplingDate)
+topotu.data.s4$SamplingDate <- as.Date(topotu.data.s4$SamplingDate,format = "%Y%m%d")
+
+extractmax.s4 <- max(topotu.data.s4$mean)
+labelheight4 <- extractmax.s4*0.9
+
+label.s4 <- list("786176 (Rhodobacteraceae)",
+                  expression(paste("538602 (", italic("Shewanella"), ")")),
+                  "810446 (Colwelliaceae)")
+
+top.s4 <- ggplot(data = topotu.data.s4, 
+                           aes(x = SamplingDate, y = mean, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  geom_errorbar(aes(y = mean, ymin=mean-se, 
+                    ymax=mean+se, na.rm=T), 
+                width=.1) +
+  scale_colour_manual(values=p4,
+                      labels=label.s4) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=0,ymax=Inf, alpha = .1) +
+  annotate("text", label="D", x=as.Date('2013-07-10'), y=labelheight4) +
+  xlab("") + 
+   ylab("") +
+  theme_classic() +
+   theme(text = element_text(size=10),
+        legend.text=element_text(size=10),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+# ===================== Panel 5 ===============================
+
+topotu.t.melt.s5 <- topotu.t.melt[c(613:680,           #816454 (Flavobacterium)
+                                    681:748          #785501 (Rhodobacteraceae)
+                                    ),]
+
+
+topotu.data.s5 <- ddply(topotu.t.melt.s5, c("SamplingDate", "OTU"), summarise,
+               N = length(Abundance),
+               mean = mean(Abundance),
+               sd   = sd(Abundance),
+               se   = sd / sqrt(N)
+)
+
+topotu.data.s5$SamplingDate <- as.character(topotu.data.s5$SamplingDate)
+topotu.data.s5$SamplingDate <- as.Date(topotu.data.s5$SamplingDate,format = "%Y%m%d")
+
+extractmax.s5 <- max(topotu.data.s5$mean)
+labelheight5 <- extractmax.s5*0.9
+
+label.s5 <- list(expression(paste("816454 (", italic("Flavobacterium"), ")")),
+                                "785501 (Rhodobacteraceae)")
+
+top.s5 <- ggplot(data = topotu.data.s5, 
+                           aes(x = SamplingDate, y = mean, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  geom_errorbar(aes(y = mean, ymin=mean-se, 
+                    ymax=mean+se, na.rm=T), 
+                width=.1) +
+  scale_colour_manual(values=p5,
+                      labels=label.s5) +
+  xlab("") + 
+   ylab("") +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=0,ymax=Inf, alpha = .1) +
+  annotate("text", label="E", x=as.Date('2013-07-10'), y=labelheight5) +
+  theme_classic() +
+   theme(text = element_text(size=10),
+        legend.text=element_text(size=10),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black")) 
+
+# =============== put the panels together with gridExtra ========================
+
+panel1 <- ggplot_gtable(ggplot_build(top.s1))
+panel2 <- ggplot_gtable(ggplot_build(top.s2))
+panel3 <- ggplot_gtable(ggplot_build(top.s3))
+panel4 <- ggplot_gtable(ggplot_build(top.s4))
+panel5 <- ggplot_gtable(ggplot_build(top.s5))
+
+
+maxWidth = grid::unit.pmax(panel1$widths[2:3], panel2$widths[2:3], panel3$widths[2:3],
+                     panel4$widths[2:3], panel5$widths[2:3])
+ 
+panel1$widths[2:3] <- maxWidth
+panel2$widths[2:3] <- maxWidth
+panel3$widths[2:3] <- maxWidth
+panel4$widths[2:3] <- maxWidth
+panel5$widths[2:3] <- maxWidth
+grid.arrange(panel1, panel2, panel3, panel4, panel5, heights = c(2, 2, 2, 2, 2))
+
+```
+
+# Figure 4. NMDS
+
+```{r NMDS_rarefied_by_month_and_BC_similarity, echo=FALSE, fig.cap="NMDS of SWI samples, rarefied data, July 2013-March 2014."}
+mds <- metaMDS(otutable_bac_samples_t, dist="bray", k=2, autotransform=T)
+coded.mds <- cbind(mds$points, meta_sorted)
+
+coded.mds$Month <- as.factor(coded.mds$Month)
+coded.mds$Month = factor(coded.mds$Month,
+                               levels=c("July", "August", "September", 
+                               "October", "November", "December",
+                               "January", "February", "March"))
+
+coded.mds$ShortMonth <- as.factor(coded.mds$ShortMonth)
+coded.mds$ShortMonth = factor(coded.mds$ShortMonth,
+                               levels=c("Jul", "Aug", "Sep", 
+                               "Oct", "Nov", "Dec",
+                               "Jan", "Feb", "Mar"))
+
+coded.mds$BCDendrogram50PercentSimilar <-
+                as.factor(coded.mds$BCDendrogram50PercentSimilar)
+coded.mds$BCDendrogram50PercentSimilar = factor(
+                coded.mds$BCDendrogram50PercentSimilar,
+                levels=c("1","2","3","4","5"))
+
+ggplot(coded.mds, aes(x=MDS1, y=MDS2, color=BCDendrogram50PercentSimilar, label=Week
+                      )) +
+  geom_text(size=4, show.legend = FALSE) +
+  stat_ellipse() +
+  #scale_color_hue() +
+  scale_colour_hue(name="Groups with Bray-Curtis similarity >0.50",
+                      labels=c(
+                              "July-November (low BP, <5)",
+                              "December and March (moderate BP, 5-21)",
+                              "Early January (high BP, 26-44)",
+                              "Late Jan-Early Feb (highest BP, 50-129)",
+                              "Late February (high BP, 17-43)")
+                              ) +
+  ylim(-0.75, 1.0) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+  #xlim(-1.15, 1.15) +
+ # scale_shape_manual(values=c(106,65,83,79,78,68,74,70,77)) +
+  theme_classic() +
+  theme(legend.position = c(0.21, 0.8),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 10),
+        legend.background = element_rect(fill="transparent"),
+        legend.key.height = unit(0.2, "in"),
+        panel.border = element_rect(colour = "black", fill=NA))
+
+
+```
+
+
+# Supplemental Figure 2. Ancillary data
+
+```{r ancillary_data_aggregate, echo=FALSE}
+
+meta <- fread('SWI.map.txt')
+idx_meta <- order(meta$'#SampleID', decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+
+meta_sorted[meta_sorted == -999] <- NA
+
+adata <- ddply(meta_sorted, "SamplingDate", summarise,
+                 N.pho    = length(Phosphate, na.rm=TRUE),
+                 mean.pho = mean(Phosphate, na.rm=TRUE),
+                 sd.pho   = sd(Phosphate, na.rm=TRUE),
+                 se.pho   = sd.pho / sqrt(N.pho),
+                N.sil    = length(Silicate, na.rm=TRUE),
+                 mean.sil = mean(Silicate, na.rm=TRUE),
+                 sd.sil   = sd(Silicate, na.rm=TRUE),
+                 se.sil   = sd.sil / sqrt(N.sil),
+               N.nit    = length(NitrateNitrite, na.rm=TRUE),
+                 mean.nit = mean(NitrateNitrite, na.rm=TRUE),
+                 sd.nit   = sd(NitrateNitrite, na.rm=TRUE),
+                 se.nit   = sd.nit / sqrt(N.nit),
+               N.pc    = length(PC, na.rm=TRUE),
+                 mean.pc = mean(PC, na.rm=TRUE),
+                 sd.pc   = sd(PC, na.rm=TRUE),
+                 se.pc   = sd.pc / sqrt(N.pc),
+               N.pn    = length(PN, na.rm=TRUE),
+                 mean.pn = mean(PN, na.rm=TRUE),
+                 sd.pn   = sd(PN, na.rm=TRUE),
+                 se.pn   = sd.pn / sqrt(N.pn),
+                  N.ba    = length(AccuriCount),
+                 mean.ba = mean(AccuriCount),
+                 sd.ba   = sd(AccuriCount),
+                 se.ba   = sd.ba / sqrt(N.ba),
+                N.temp    = length(Temp, na.rm=TRUE),
+                 mean.temp = mean(Temp, na.rm=TRUE),
+                 sd.temp   = sd(Temp, na.rm=TRUE),
+                 se.temp   = sd.temp / sqrt(N.temp),
+               N.doc    = length(DOC, na.rm=TRUE),
+                 mean.doc = mean(DOC, na.rm=TRUE),
+                 sd.doc   = sd(DOC, na.rm=TRUE),
+                 se.doc   = sd.doc / sqrt(N.doc),
+                N.chla    = length(Chl, na.rm=TRUE),
+                 mean.chla = mean(Chl, na.rm=TRUE),
+                 sd.chla   = sd(Chl, na.rm=TRUE),
+                 se.chla   = sd.chla / sqrt(N.chla),
+                N.to    = length(EstimatedTurnover),
+                 mean.to = mean(EstimatedTurnover),
+                 sd.to   = sd(EstimatedTurnover),
+                 se.to   = sd.to / sqrt(N.to)
+               )
+
+
+
+adata$SamplingDate <- as.Date(adata$SamplingDate,"%m/%d/%Y")
+
+
+
+min <- min(as.Date(adata$SamplingDate))
+max <- max(as.Date(adata$SamplingDate))
+bloom.min <- as.Date("0013-12-25")
+bloom.max <- as.Date("0014-2-28")
+
+```
+
+
+```{r ancillary_data_multiplot, fig.cap="Ancillary data associated with our time series, July 2013-March 2014, Palmer Station. Means for each date are shown. Error bars represent standard error.", echo=FALSE}
+extractmax.pho <- max(adata$mean.pho, na.rm=TRUE)
+labelheight.pho <- extractmax.pho*0.85
+
+g.pho <-ggplot(adata[!is.na(adata$mean.pho),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.pho), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.pho-se.pho, ymax=mean.pho+se.pho), 
+                  width=.1) +
+    geom_line(aes(y=mean.pho)) + 
+    xlab("") + 
+  ylim(c(0,2.5))+
+    ylab(expression(paste("Phosphate (", mu, "mol ", l^{-1}, ")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  scale_y_continuous(breaks=c(0,1,1.5,2))+
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="C", x=as.Date('0013-07-10'), y=2.3) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+extractmax.sil <- max(adata$mean.sil, na.rm=TRUE)
+labelheight.sil <- extractmax.sil*0.85
+
+g.sil <-ggplot(adata[!is.na(adata$mean.sil),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.sil), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.sil-se.sil, ymax=mean.sil+se.sil), 
+                  width=.1) +
+    geom_line(aes(y=mean.sil)) + 
+    xlab("") + 
+    ylab(expression(paste("Silicate (", mu, "mol ", l^{-1}, ")"))) +
+  ylim(c(0,70)) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="D", x=as.Date('0013-07-10'), y=62) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+extractmax.nit <- max(adata$mean.nit, na.rm=TRUE)
+labelheight.nit <- extractmax.nit*0.85
+
+g.nit <-ggplot(adata[!is.na(adata$mean.nit),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.nit), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.nit-se.nit, ymax=mean.nit+se.nit), 
+                  width=.1) +
+    geom_line(aes(y=mean.nit)) + 
+    xlab("") + 
+    ylab(expression(paste("Nitrate & nitrite (", mu, "mol ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="B", x=as.Date('0013-07-10'), y=28) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+extractmax.pc <- max(adata$mean.pc, na.rm=TRUE)
+labelheight.pc <- extractmax.pc*0.85
+
+g.pc <-ggplot(adata[!is.na(adata$mean.pc),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.pc), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.pc-se.pc, ymax=mean.pc+se.pc), 
+                  width=.1) +
+    geom_line(aes(y=mean.pc)) + 
+    xlab("") + 
+    ylab(expression(paste("POC (", mu, "g ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="F", x=as.Date('0013-07-10'), y=800) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+extractmax.pn <- max(adata$mean.pn, na.rm=TRUE)
+labelheight.pn <- extractmax.pn*0.85
+
+g.pn <-ggplot(adata[!is.na(adata$mean.pn),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.pn), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.pn-se.pn, ymax=mean.pn+se.pn), 
+                  width=.1) +
+    geom_line(aes(y=mean.pn)) + 
+    xlab("") + 
+    ylab(expression(paste("PON (", mu, "g ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="G", x=as.Date('0013-07-10'), y=280) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+extractmax.doc <- max(adata$mean.doc, na.rm=TRUE)
+labelheight.doc <- extractmax.doc*0.85
+
+g.doc <- ggplot(adata[!is.na(adata$mean.doc),], aes(x=SamplingDate)) +
+     geom_point(aes(y=mean.doc), shape=20, na.rm=T, size=3) +
+     geom_errorbar(aes(ymin=mean.doc-se.doc, ymax=mean.doc+se.doc),
+                   width=.1) +
+     geom_line(aes(y=mean.doc)) +
+     xlab("Sampling date") +
+     ylab(expression(paste("DOC (", mu, "mol ", l^{-1}, ")"))) +
+     scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    annotate("rect",
+            xmin=bloom.min, xmax=bloom.max,
+            ymin=-Inf,ymax=Inf, alpha = .1) +
+     annotate("text", label="H", x=as.Date('0013-07-10'), y=60) +
+     theme_classic() +
+     theme(axis.line.x = element_line(color = "black"),
+         axis.line.y = element_line(color = "black"),
+         axis.text.y=element_text(angle=90, hjust=0.5))
+
+extractmax.ba <- max(adata$mean.ba, na.rm=TRUE)
+labelheightba <- extractmax.ba*0.85
+
+g.ba <-ggplot(adata[!is.na(adata$mean.ba),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.ba), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), 
+                  width=.1) +
+    geom_line(aes(y=mean.ba)) + 
+    xlab("") + 
+    ylab(expression(paste("BA (cells ", ml^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  scale_y_continuous(breaks=c(5e5, 1e6),
+                     labels=c("5e5","1e6")) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("text", label="E", x=as.Date('0013-07-10'), y=1100000) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+extractmax.temp <- max(adata$mean.temp, na.rm=TRUE)
+labelheight.temp <- extractmax.temp*0.85
+
+g.temp <-ggplot(adata[!is.na(adata$mean.temp),], aes(x=SamplingDate)) +
+     geom_point(aes(y=mean.temp), shape=20, na.rm=T, size=3) +    
+     geom_errorbar(aes(ymin=mean.temp-se.temp, ymax=mean.temp+se.temp), 
+                   width=.1) +
+     geom_line(aes(y=mean.temp)) + 
+     xlab("Sampling date") + 
+     ylab(expression(paste("Temperature (" *~degree* "C)"))) +
+     scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+   annotate("rect", 
+            xmin=bloom.min, xmax=bloom.max, 
+            ymin=-Inf,ymax=Inf, alpha = .1) +
+   annotate("text", label="A", x=as.Date('0013-07-10'), y=labelheight.temp) +
+    theme_classic() +
+     theme(axis.line.x = element_line(color = "black"), 
+         axis.line.y = element_line(color = "black"),
+         axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+multiplot(g.temp, g.nit,g.pho,g.sil,g.ba,g.pc,g.pn,cols=2)
+
+```
+
+```{r, ancillary_data_grid, eval=FALSE, echo=FALSE}
+panel.pho <- ggplot_gtable(ggplot_build(g.pho))
+panel.sil <- ggplot_gtable(ggplot_build(g.sil))
+panel.nit <- ggplot_gtable(ggplot_build(g.nit))
+panel.pc <- ggplot_gtable(ggplot_build(g.pc))
+panel.pn <- ggplot_gtable(ggplot_build(g.pn))
+panel.ba <- ggplot_gtable(ggplot_build(g.ba))
+panel.temp <- ggplot_gtable(ggplot_build(g.temp))
+panel.doc <- ggplot_gtable(ggplot_build(g.doc))
+
+maxWidth1 = grid::unit.pmax(panel.temp$widths[2:3],panel.pho$widths[2:3], panel.sil$widths[2:3],panel.nit$widths[2:3])
+
+maxWidth2 = grid::unit.pmax (panel.doc$widths[2:3],panel.pc$widths[2:3],
+                     panel.pn$widths[2:3], panel.ba$widths[2:3])
+
+panel.temp$widths[2:3] <- maxWidth1
+panel.pho$widths[2:3] <- maxWidth1
+panel.sil$widths[2:3] <- maxWidth1
+panel.nit$widths[2:3] <- maxWidth1
+panel.doc$widths[2:3] <- maxWidth2
+panel.pc$widths[2:3] <- maxWidth2
+panel.pn$widths[2:3] <- maxWidth2
+panel.ba$widths[2:3] <- maxWidth2
+
+g <- grid.arrange(arrangeGrob(panel.temp,panel.nit, panel.pho, panel.sil),
+             arrangeGrob(panel.doc,panel.pc, panel.pn, panel.ba), ncol = 2,
+             bottom=textGrob("Date", gp=gpar(fontsize=12)))
+
+g
+
+```
+
+
+
+
+# Supplemental Figure 3. Bacterial production at multiple stations.
+
+```{r compare_BP_at_different_stations, fog.cap="A comparison of bacterial production values recorded for the Palmer Station seawater intake and LTER Station B at 5-m and 10-m depths, December 2013-March 2014.", echo=FALSE}
+
+aqw <- dcast(bp_chla, Date ~ Station, value.var = "Leucine", fun.aggregate = mean)
+
+bpdata <- ddply(bp_chla, c("Date","Station"), summarise,
+                 N.leu    = length(Leucine),
+                 mean.leu = mean(Leucine),
+                 sd.leu   = sd(Leucine),
+                 se.leu   = sd.leu / sqrt(N.leu))
+
+                 
+bpdata$Date <- as.Date(bpdata$Date,"%m/%d/%y")
+                 
+bpdata2 <- bpdata[which(bpdata$Station=="SWI" | bpdata$Station=="B-10" | bpdata$Station=="B-5"),]
+                 
+max <- max(as.Date(bpdata$Date))
+min <- as.Date("2013-12-01")
+
+                 
+ggplot(bpdata2, aes(x=Date, color=Station)) +
+    geom_point(aes(y=mean.leu), shape=20, na.rm=T, size=1.5) +    
+    geom_line(aes(y=mean.leu), size=1) + 
+    xlab("Date") + 
+    ylab(expression(paste("Production (pmol ", l^{-1}, hour^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    scale_colour_manual(values=c("#000000", "#E69F00", "#56B4E9"),
+                  name  ="Site",
+                  labels=c("Station B (5m)", "Station B (10m)", "Seawater Intake")) +
+    annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    theme_classic() +
+    theme(text = element_text(size=8),
+        legend.text=element_text(size=8),
+        axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        legend.position=c(.8, .8)) 
+
+
+```
+
+
+
+
+# Supplemental Figure 4. Stepwise linear regression.
+
+## Regressions with extra data (not all dates are affiliated with DNA samples)
+
+```{r bp_chla_SLR, fig.cap="Observed (including interpolated) values versus modeled values for (A) bacterial production and (B) bacterial abundance. Models were selected by stepwise linear regression with minimized Akaike Information Criteria. The final models for both production and abundance were based on chlorophyll a with 0-, 10-, and 20-day lags.", echo=FALSE}
+
+
+complete_leucine_chla <- read.delim("complete_leucine_chla.txt")
+
+clc <- complete_leucine_chla[complete_leucine_chla$Station=="SWI",]
+
+summary(lm(Leucine~Chla, data=clc))
+
+clc$Date <- as.Date(clc$Date, "%m/%d/%y")
+clc$Station <- NULL
+
+clc_agg <- aggregate(clc,list(clc$Date),mean)
+
+clc_Leucine <- zoo(clc_agg$Leucine,clc_agg$Date)
+clc_Chla <- zoo(clc_agg$Chla,clc_agg$Date)
+clc_Temp <- zoo(clc_agg$Temp,clc_agg$Date)
+clc_Day <- zoo(clc_agg$Day,clc_agg$Date)
+# figure out the number of days in the data
+max(clc$Date) - min(clc$Date)
+daily_ts <- zoo(0:257,min(clc$Date)+0:257)
+
+clc_ts <- merge(clc_Chla, daily_ts)
+clc_ts <- merge(clc_Leucine, clc_ts)
+clc_ts <- merge(clc_Temp,clc_Day, clc_ts)
+
+# ###
+# clc_df <- as.data.frame(clc_ts)
+# #clc_df$clc_Day <- min(clc$Date)+0:257
+# #clc_df$daily_ts <- NULL
+# clc_df$clc_Day <- NULL
+# a.out2 <- amelia(clc_df, ts = "daily_ts", p2s = 0,  polytime = 2, lags = "clc_Chla", leads = "clc_Chla", , logs=c(2,3), empri=10)
+# plot(a.out2)
+# 
+# plot(x=daily_ts,y=a.out2$imputations[1]$imp1$clc_Chla)
+# points(x=clc_Day,y=clc_Temp, pch=4, col='blue')
+# 
+# df <- zoo(a.out2$imputations[1]$imp1,min(clc$Date)+0:257)
+# amelia_mod1 <- dynlm(formula = clc_Leucine ~ L(clc_Chla,c(0,10,20)) , data = df)
+# summary(amelia_mod1)
+# 
+# plot(y=clc$Leucine, x=clc$Date, type='p', cex=0.8, ylab="Production (pmol/l/hr)", xlab="Date")
+# lines(amelia_mod1$index,amelia_mod1$fitted.values, col="red", lwd=2)
+# #plot(clc_ts$clc_Chla, col = "grey", lwd=2)
+# legend("topleft",inset=0.05,legend=c("Measured BP","Modeled BP"),lty=c(NA,1),col=c("black","red"), pch=c(1,NA),lwd=c(0.8,2), bty="n")
+
+###
+
+clc_ts$clc_Leucine <- na.approx(clc_ts$clc_Leucine)
+clc_ts$clc_Chla <- na.approx(clc_ts$clc_Chla)
+clc_ts$clc_Temp <- na.approx(clc_ts$clc_Temp)
+clc_ts$clc_Day <- na.approx(clc_ts$clc_Day)
+
+summary(lm(clc_Leucine~clc_Chla, data=clc_ts))
+
+summary(dynlm(formula = clc_Leucine ~ L(clc_Chla,10), data = clc_ts))
+
+model1 <- dynlm(clc_Leucine ~  L(clc_Chla,0) + L(clc_Chla,10) + L(clc_Chla,20), data = clc_ts)
+steps1 <- stepAIC(model1, direction="both")
+steps1$anova
+summary(steps1)
+vif(steps1)
+
+plot(y=clc$Leucine, x=clc$Date, type='p', cex=0.8, ylab="Production (pmol/l/hr)", xlab="Date")
+lines(steps1$index,steps1$fitted.values, col="red", lwd=2)
+#plot(clc_ts$clc_Chla, col = "grey", lwd=2)
+legend("topleft",inset=0.05,legend=c("Measured BP","Modeled BP"),lty=c(NA,1),col=c("black","red"), pch=c(1,NA),lwd=c(0.8,2), bty="n")
+
+
+```
+
+
+## Regressions with MIMARKS data
+
+```{r BA_vs_chl_lag, echo=FALSE}
+
+meta <- read.delim("SWI.map.txt")
+meta[meta == -999] <- NA
+
+summary(lm(ChlA~Temp, data=meta))
+
+meta$Date <- as.Date(meta$SamplingDate, "%m/%d/%y")
+
+meta_agg <- aggregate(meta,list(meta$Date),mean)
+meta_agg2 <- meta_agg[c(-1,-2,-24),] 
+
+# ================= inteprolation ========================
+#interpolation will not work with leading an trailing NAs, remove those rows as necessary
+
+meta_Leu <- zoo(meta_agg2$Leucine, meta_agg2$Date)
+#meta_BA <- zoo(meta_agg2$AccuriCount,meta_agg2$Date)
+meta_Chla <- zoo(meta_agg2$ChlA, meta_agg2$Date)
+meta_Temp <- zoo(meta_agg2$Temp, meta_agg2$Date)
+meta_Pho <- zoo(meta_agg2$Phosphate, meta_agg2$Date)
+meta_Nit <- zoo(meta_agg2$NitrateNitrite, meta_agg2$Date)
+meta_Sil <- zoo(meta_agg2$Silicate, meta_agg2$Date)
+meta_POC <- zoo(meta_agg2$PC, meta_agg2$Date)
+meta_PON <- zoo(meta_agg2$PN, meta_agg2$Date)
+#meta_DOC <- zoo(meta_agg2$DOC,meta_agg2$Date)
+meta_DL <- zoo(meta_agg2$DayLength,meta_agg2$Date)
+meta_Day <- zoo(meta_agg2$LoessDay,meta_agg2$Date)
+# figure out the number of days in the data
+max(meta_agg2$Date) - min(meta_agg2$Date)
+daily_ts <- zoo(1:186,min(meta_agg2$Date)+0:185)
+
+meta_ts <- merge(meta_Chla, daily_ts)
+#meta_ts <- merge(meta_BA, meta_ts)
+meta_ts <- merge(meta_Leu, meta_ts)
+meta_ts <- merge(meta_Temp,
+                meta_Pho,
+                meta_Sil,
+                meta_Nit,
+                meta_DL,
+                meta_POC,
+                meta_PON,
+                meta_Day,
+                meta_ts)
+
+#meta_ts$meta_BA <- na.approx(meta_ts$meta_BA) 
+meta_ts$meta_Chla <- na.approx(meta_ts$meta_Chla)
+meta_ts$meta_Leu <- na.approx(meta_ts$meta_Leu)
+meta_ts$meta_Temp <- na.approx(meta_ts$meta_Temp)
+meta_ts$meta_Pho <- na.approx(meta_ts$meta_Pho)
+meta_ts$meta_Nit <- na.approx(meta_ts$meta_Nit)
+meta_ts$meta_Sil <- na.approx(meta_ts$meta_Sil)
+#meta_ts$meta_DOC <- na.approx(meta_ts$meta_DOC)
+meta_ts$meta_POC <- na.approx(meta_ts$meta_POC)
+meta_ts$meta_PON <- na.approx(meta_ts$meta_PON)
+meta_ts$meta_Day <- na.approx(meta_ts$meta_Day)
+meta_ts$meta_DL <- na.approx(meta_ts$meta_DL)
+
+# ================ stepwise linear regression ======================
+
+
+summary(dynlm(meta_Leu ~ meta_PON, data=meta_ts))
+
+model2 <- dynlm(formula = meta_Leu ~ meta_Temp + L(meta_Temp,10) + L(meta_Temp,20), data = meta_ts)
+steps2 <- stepAIC(model2, direction="forward")
+steps2$anova
+summary(steps2)
+vif(steps2)
+
+# =============== plot ========================================
+
+plot(y=meta$AccuriCount[-(1:21)], x=meta$Date[-(1:21)], type='p', cex=0.8, ylab="Abundance (cells/ml)", xlab="Date")
+lines(steps2$index,steps2$fitted.values, col="red", lwd=2)
+legend("topleft",inset=0.05,legend=c("Measured BA","Modeled BA"),lty=c(NA,1),col=c("black","red"), pch=c(1,NA),lwd=c(0.8,2), bty="n")
+
+#par(mfrow=c(1,2))
+
+
+
+```
+
+
+# Supplemental Figure 5. Richness versus read number
+
+Although Chao's method is supposed to provide a non-parametric estimation of true richness regardless of initial library size, we found that richness estimates had a significant, positive linear relationship with sequence number. This may indicate that the species abundance distributions vary widely among our datasets. 
+
+```{r run_chao_jost_2, eval=TRUE, echo=FALSE}
+
+coverage2 <- iNEXT(otutable_bac_unrar_samples, q = 0, datatype = "abundance", size = NULL, endpoint = 434105, knots = 10, se = TRUE, nboot = 1)
+
+coverage2_df <- data.frame(coverage2$AsyEst)
+coverage2_df <- dcast(coverage2_df, Var1 ~ Var2 + Var3)
+
+coverage2_df_sorted <- coverage2_df[order(as.character(coverage2_df$Var1)),]
+```
+
+```{r compare_read_num_to_observed_and_estimated_unrarefied, echo=FALSE, fig.cap="Both observed and estimated richness are significantly correlated to sampling depth.", fig.height=8, fig.width=6}
+
+read_num <- colSums(otutable_bac_unrar_samples)
+read_num_sort <- read_num[order(names(read_num))]
+coverage2_df_sorted$cj_estimate <- coverage2_df_sorted$`Species richness_Estimator`
+coverage2_df_sorted$Observed <- coverage2_df_sorted$`Species richness_Observed`
+read_num_vs_richness <- cbind(coverage2_df_sorted, read_num_sort)
+
+m_obs <- lm(Observed ~ read_num_sort, read_num_vs_richness)
+a_obs <- signif(coef(m_obs)[1], digits = 2)
+b_obs <- signif(coef(m_obs)[2], digits = 2)
+r_obs <- signif(summary(m_obs)$r.squared, digits=2)
+textlab_obs <- paste("y = ",b_obs,"x + ",a_obs, sep="")
+#print(textlab)
+textlab2_obs <- paste("R^2 = ",r_obs)
+#print(textlab2)
+p_obs <- signif(summary(m_obs)$coefficients["read_num_sort","Pr(>|t|)"],digits=2)
+textlab3_obs <- paste("p =",p_obs)
+
+observed_vs_read_number <- ggplot(read_num_vs_richness, aes(x = read_num_sort, y = Observed)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "", 
+       y = "Observed richness (# of OTUs)") + 
+  annotate("text", x=50000, y = 5000, label="A") +
+  annotate("text", x = 400000, y = 2000, label = textlab_obs, color="black", size = 3, parse=FALSE) +
+  annotate("text", x = 400000, y = 1700, label = textlab2_obs, color="black", size = 3, parse=FALSE) +
+   annotate("text", x = 400000, y = 1400, label = textlab3_obs, color="black", size = 3, parse=FALSE) +
+  theme_bw()
+
+m_est <- lm(cj_estimate ~ read_num_sort, read_num_vs_richness)
+a_est <- signif(coef(m_est)[1], digits = 2)
+b_est <- signif(coef(m_est)[2], digits = 2)
+r_est <- signif(summary(m_est)$r.squared, digits=2)
+textlab_est <- paste("y = ",b_est,"x + ",a_est, sep="")
+#print(textlab)
+textlab2_est <- paste("R^2 = ",r_est)
+#print(textlab2)
+p_est <- signif(summary(m_est)$coefficients["read_num_sort","Pr(>|t|)"],digits=2)
+textlab3_est <- paste("p =",p_est)
+ 
+
+estimated_vs_read_number <- ggplot(read_num_vs_richness, aes(x = read_num_sort, y = cj_estimate)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "", 
+       y = "Estimated richness (# of OTUs)") +
+  annotate("text", x=50000, y = 9000, label="B") +
+  annotate("text", x = 400000, y = 4000, label = textlab_est, color="black", size = 3, parse=FALSE) +
+  annotate("text", x = 400000, y = 3500, label = textlab2_est, color="black", size = 3, parse=TRUE) +
+   annotate("text", x = 400000, y = 3000, label = textlab3_est, color="black", size = 3, parse=FALSE) +
+  theme_bw()
+
+
+
+panel.obs <- ggplot_gtable(ggplot_build(observed_vs_read_number))
+panel.est <- ggplot_gtable(ggplot_build(estimated_vs_read_number))
+
+
+maxWidth = grid::unit.pmax(panel.obs$widths[2:3], panel.est$widths[2:3])
+ 
+panel.obs$widths[2:3] <- maxWidth
+panel.est$widths[2:3] <- maxWidth
+
+grid.arrange(panel.obs, panel.est, heights = c(2,2), 
+             bottom=grid::textGrob("Library size (# of sequences)", gp=grid::gpar(fontsize=12)))
+
+```
+
+# Supplemental Figure 6 TMM and RLE normalizations of unrarefied data
+
+NMDS based on un-rarefied sequence libraries showed the influence of initial library size even after relative abundance, RLE, and TMM normalizations. For this reason, all subsequent analyses relied on libraries rarefied to the smallest library size of 43,308 sequences.
+
+## Import data for edgeR
+
+```{r import_data_for_edgeR, echo=FALSE}
+
+##workflow from here: https://github.com/joey711/phyloseq/issues/336
+biom_file = "otu_table_mc2_w_tax_no_pynast_failures_min_SWI_chlor_gone_json.biom" 
+map_file = "SWI.map.copy.txt" 
+tree_file = "rep_set.tre" 
+
+tree <-read_tree(tree_file)
+map <- import_qiime_sample_data(map_file)
+
+mydata <- import_biom(biom_file,tree_file,parseFunction=parse_taxonomy_greengenes)
+#warnings(mydata)
+
+#intersect(mydata)
+mydata <- merge_phyloseq(mydata,map)
+
+mydata
+
+
+```
+
+
+## RLE normalization
+
+```{r edgeR-norm_RLE, fig.keep='none', echo=FALSE}
+edgeRnorm_RLE = function(mydata){
+  require("edgeR")
+  require("phyloseq")
+  # physeq = simlist0[[1]]
+  # physeq = simlist0[[117]]
+  # Enforce orientation.
+  if( !taxa_are_rows(mydata) ){
+    mydata <- t(mydata)
+  }
+  x = as(otu_table(mydata), "matrix")
+  # Add one to protect against overflow, log(0) issues.
+  x = x + 1
+  # Now turn into a DGEList
+  y = DGEList(counts=x, group=get_variable(mydata, "Month")) #, remove.zeros=TRUE)
+  # Perform edgeR-encoded normalization, using the following method
+  z = calcNormFactors(y, method="RLE")
+  #z = calcNormFactors(y, method="TMM")
+  # A check that we didn't divide by zero inside `calcNormFactors`
+  if( !all(is.finite(z$samples$norm.factors)) ){
+    stop("Something wrong with edgeR::calcNormFactors on this data, non-finite $norm.factors")
+  }
+  # Estimate dispersions
+  z1 = estimateCommonDisp(z)
+  z2 = estimateTagwiseDisp(z1)
+  return(list(z=z,z1=z1,z2=z2, y=y))
+}
+
+norm_RLE <- edgeRnorm_RLE(mydata)
+```
+
+## TMM normalization
+
+```{r edgeR-norm_TMM, fig.keep='none', echo=FALSE}
+edgeRnorm_TMM = function(mydata){
+  require("edgeR")
+  require("phyloseq")
+  # physeq = simlist0[[1]]
+  # physeq = simlist0[[117]]
+  # Enforce orientation.
+  if( !taxa_are_rows(mydata) ){
+    mydata <- t(mydata)
+  }
+  x = as(otu_table(mydata), "matrix")
+  # Add one to protect against overflow, log(0) issues.
+  x = x + 1
+  # Now turn into a DGEList
+  y = DGEList(counts=x, group=get_variable(mydata, "Month")) #, remove.zeros=TRUE)
+  # Perform edgeR-encoded normalization, using the following method
+  #z = calcNormFactors(y, method="RLE")
+  z = calcNormFactors(y, method="TMM")
+  # A check that we didn't divide by zero inside `calcNormFactors`
+  if( !all(is.finite(z$samples$norm.factors)) ){
+    stop("Something wrong with edgeR::calcNormFactors on this data, non-finite $norm.factors")
+  }
+  # Estimate dispersions
+  z1 = estimateCommonDisp(z)
+  z2 = estimateTagwiseDisp(z1)
+  return(list(z=z,z1=z1,z2=z2))
+}
+
+
+norm_TMM <- edgeRnorm_TMM(mydata)
+
+```
+
+## NMDS
+
+### Relative abundance
+
+```{r unrarefied_to_relative_abundance, echo=FALSE}
+
+relative <- function(data){
+  csum <- colSums(data)
+  sweep(data,2,csum,"/") 
+}
+
+otutable_bac_unrar_samples_relative <- relative(otutable_bac_unrar_samples)
+otutable_bac_unrar_samples_relative_t <- t(otutable_bac_unrar_samples_relative)
+
+otutable_bac_unrar_samples_relative_t <- 
+  otutable_bac_unrar_samples_relative_t[order(rownames(otutable_bac_unrar_samples_relative_t)), ]
+
+mds_unrarefied_all <- 
+  metaMDS(otutable_bac_unrar_samples_relative_t, dist="bray", k=2, autotransform=T)
+coded.mds.unrarefied.all <- cbind(mds_unrarefied_all$points, meta_sorted)
+
+coded.mds.unrarefied.all$Month <- as.factor(coded.mds.unrarefied.all$Month)
+coded.mds.unrarefied.all$Month = factor(coded.mds.unrarefied.all$Month,
+                         levels=c("July", "August", "September", 
+                                  "October", "November", "December",
+                                  "January", "February", "March"))
+
+```
+
+### RLE Bray Curtis
+
+```{r RLE_norm_bray_curtis_month, echo=FALSE}
+
+Rcpp::sourceCpp('bc_sparse.cpp')
+
+t.RLE <- norm_RLE$z$counts
+transposed_RLE <- t(t.RLE)
+trans.bc.RLE <- my_bray_curtis(transposed_RLE)
+m.RLE <- monoMDS(trans.bc.RLE)
+m.order.RLE <- m.RLE$points[order(row.names(m.RLE$points)),]
+coded.mds.RLE <- cbind(m.order.RLE, meta_sorted)
+
+coded.mds.RLE$Month <- as.factor(coded.mds.RLE$Month)
+coded.mds.RLE$Month <- factor(coded.mds.RLE$Month,
+                               levels=c("July", "August", "September", 
+                               "October", "November", "December",
+                               "January", "February", "March"))
+
+```
+
+### TMM Bray Curtis
+
+```{r TMM_norm_bray_curtis, echo=FALSE}
+
+Rcpp::sourceCpp('bc_sparse.cpp')
+
+t.TMM <- norm_TMM$z$counts
+transposed_TMM <- t(t.TMM)
+trans.bc.TMM <- my_bray_curtis(transposed_TMM)
+m.TMM <- monoMDS(trans.bc.TMM)
+m.order.TMM <- m.TMM$points[order(row.names(m.TMM$points)),]
+coded.mds.TMM <- cbind(m.order.TMM, meta_sorted)
+
+
+coded.mds.TMM$Month <- as.factor(coded.mds.TMM$Month)
+coded.mds.TMM$Month <- factor(coded.mds.TMM$Month,
+                               levels=c("July", "August", "September", 
+                               "October", "November", "December",
+                               "January", "February", "March"))
+
+```
+
+## Six panel ordination
+```{r NMDS_unrarefied_six_panel_for_supplement, fig.cap="Non-metric multidimensional scaling after running three different normalization methods to accommodate size differences between un-rarefied libraries:  simple conversion to relative abundance color-coded by month (A) and un-rarefied library size (B), Relative Log Expression (RLE) normalization (C-D), and Trimmed Mean of M-Values (TMM) normalization (E-F). Figures in left column contain samples color-coded by month. Figures in right column contain samples color-coded according to library size (number of sequences) prior to normalization.", echo=FALSE, fig.height=8, fig.width=12}
+
+rel.abund.month <- ggplot(coded.mds.unrarefied.all, aes(x=MDS1, y=MDS2, color=Month)) +
+  geom_point(size=3) +
+  #stat_ellipse() +
+  #scale_color_hue() +
+  #scale_shape_manual(values=c(15,17,19,18)) +
+  #ggtitle("Unrarefied, all OTUs") +
+  annotate("text", x = -1.2, y = 0.55, label = "A", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+rel.abund.sampling.depth <- ggplot(coded.mds.unrarefied.all, aes(x=MDS1, y=MDS2, color=sequences_otu_table_mc2_w_tax_no_pynast_failures_min_SWI_chlor_gone)) +
+  geom_point(size=3) +
+  scale_colour_gradientn(colours=rainbow(4),
+                         name="No. of sequences") +
+  annotate("text", x = -1.2, y = 0.55, label = "B", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+   theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+RLE.month <- ggplot(coded.mds.RLE, aes(x=MDS1, y=MDS2, color=Month)) +
+  geom_point(size=3) +
+  #stat_ellipse() +
+  #scale_color_gradientn(colours=rainbow(4)) +
+  annotate("text", x = -2, y = 0.9, label = "C", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+   theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+RLE.sampling.depth <- ggplot(coded.mds.RLE, aes(x=MDS1, y=MDS2, color=sequences_otu_table_mc2_w_tax_no_pynast_failures_min_SWI_chlor_gone)) +
+  geom_point(size=3) +
+  scale_colour_gradientn(colours=rainbow(4),
+                         name="No. of sequences") +
+  annotate("text", x = -2, y = 0.9, label = "D", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+   theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+
+TMM.month <- ggplot(coded.mds.TMM, aes(x=MDS1, y=MDS2, color=Month)) +
+   geom_point(size=3) +
+   #stat_ellipse() +
+   #scale_color_hue() +
+   #scale_shape_manual(values=c(15,17,19,18)) +
+  annotate("text", x = -1.8, y = 1.4, label = "E", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+    theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+TMM.sampling.depth <- ggplot(coded.mds.TMM, aes(x=MDS1, y=MDS2, color=sequences_otu_table_mc2_w_tax_no_pynast_failures_min_SWI_chlor_gone)) +
+  geom_point(size=3) +
+  scale_colour_gradientn(colours=rainbow(4),
+                         name="No. of sequences") +
+  annotate("text", x = -1.8, y = 1.4, label = "F", color="black", size = 5, parse=FALSE) +
+  xlab("NMDS1") +
+  ylab("NMDS2") +
+   theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA))
+
+
+multiplot(rel.abund.month, RLE.month, TMM.month, rel.abund.sampling.depth, RLE.sampling.depth, TMM.sampling.depth, cols=2 )
+
+```
+
+
+
+
+
+
+
+
+
+
+# Other
+
+## Turnover
+```{r turnover, fig.cap="Estmated turnover time for bacterial community.", echo=FALSE}
+
+min <- min(as.Date(adata$SamplingDate))
+max <- max(as.Date(adata$SamplingDate))
+bloom.min <- as.Date("0013-12-25")
+bloom.max <- as.Date("0014-2-28")
+
+ggplot(adata[!is.na(adata$mean.to),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.to), shape=20, na.rm=T, size=3) +    
+    geom_errorbar(aes(ymin=mean.to-se.to, ymax=mean.to+se.to), 
+                  width=.1) +
+    geom_line(aes(y=mean.to), size=1) + 
+    xlab("") + 
+    ylab("Estimated turnover time (days)") +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  #scale_y_reverse() +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    theme_classic() +
+  theme(panel.background = element_rect(fill = NA),
+        panel.border = element_rect(colour = "black", fill=NA),
+        axis.title.y = element_text(vjust=-1)) 
+  
+```
+
+
+```{r turnover_chl,  eval=FALSE, echo=FALSE}
+
+p2 <- ggplot(adata[!is.na(adata$mean.chla),], aes(x=SamplingDate)) +
+    geom_point(aes(y=mean.chla), shape=20, na.rm=T, size=3, color="#00CC00") +    
+    geom_errorbar(aes(ymin=mean.chla-se.chla, ymax=mean.chla+se.chla), 
+                  width=.1, color="#00CC00") +
+    geom_line(aes(y=mean.chla), color="#00CC00", size=1) + 
+    xlab("") + 
+     ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=bloom.min, xmax=bloom.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    theme_classic() +
+    theme(panel.background = element_rect(fill = NA),
+        panel.border = element_rect(colour = "black", fill=NA),
+        axis.title.y = element_text(vjust=-1)) 
+
+#====================
+
+# plot both on same axis
+# extract gtable
+g1 <- ggplot_gtable(ggplot_build(p1))
+g2 <- ggplot_gtable(ggplot_build(p2))
+
+# overlap the panel of 2nd plot on that of 1st plot
+pp <- c(subset(g1$layout, name == "panel", se = t:r))
+g <- gtable_add_grob(g1, g2$grobs[[which(g2$layout$name == "panel")]],
+pp$t,
+pp$l, pp$b, pp$l)
+
+# axis tweaks
+ia <- which(g2$layout$name == "axis-l")
+ga <- g2$grobs[[ia]]
+ax <- ga$children[[2]]
+ax$widths <- rev(ax$widths)
+ax$grobs <- rev(ax$grobs)
+ax$grobs[[1]]$x <- ax$grobs[[1]]$x - unit(1, "npc") + unit(0.15, "cm")
+g <- gtable_add_cols(g, g2$widths[g2$layout[ia, ]$l], length(g$widths) - 1)
+g <- gtable_add_grob(g, ax, pp$t, length(g$widths) - 1, pp$b)
+
+
+il <- which(g2$layout$name == "ylab")
+gl <- g2$grobs[[il]]
+gl$x <- gl$x - unit(1, "npc") + unit(0.15, "cm")
+
+g <- gtable_add_cols(g, g2$widths[g2$layout[il, ]$l], length(g$widths) - 1)
+g <- gtable_add_grob(g, gl, pp$t, length(g$widths) - 1, pp$b)
+
+# draw it
+grid.draw(g)
+
+```
+
+

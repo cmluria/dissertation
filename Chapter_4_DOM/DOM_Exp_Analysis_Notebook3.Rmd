@@ -1,0 +1,2936 @@
+---
+title: "DOM analysis notebook 3"
+author: "Cat Luria"
+date: "August 4, 2016"
+
+output: 
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+
+---
+\newpage
+```{r, echo=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+---
+
+
+#Getting started
+
+First, load all the necessary packages.
+
+```{r libraries, echo=FALSE, warning=FALSE}
+#libraries
+library(data.table)
+library(BiodiversityR)
+library(vegan)
+library(ggplot2)
+# library(wesanderson)
+# library(scales)
+# library(reshape2)
+library(RColorBrewer)
+# library(gdata)
+library(plyr)
+# library(scales)
+library(grid)
+# library(Rcpp)
+# library(RcppEigen)
+# library(agricolae)
+# library(devtools)
+# library(iNEXT)
+# library(ellipse)
+# library(multtest)
+# library(phyloseq)
+# library(edgeR)
+# library(ggdendro)
+# library(zoo)
+# library(glmnet)
+# library(randomForest)
+# library(caret)
+# library(ggrepel)
+library(gridExtra)
+library(lme4)
+```
+
+```{r multiplot_function, echo=FALSE}
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+
+```{r get_data, echo=FALSE}
+
+setwd("/Users/cmluria/Documents/Documents/Thesis Chapters/DOM/16S_library_analysis")
+
+otutable <- fread('cdout_DOM_bac/otu_table_mc2_DOM_even64271_bac_from_biom.txt', skip=1)
+otutable_bac <- otutable
+
+meta <- fread('DOM.map.txt')
+
+#order meta according to MBL_library ID
+idx_meta <- order(meta$'LibraryID', decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+
+```
+
+
+
+
+# Figure 1. Environmental context (August-Dec)
+
+```{r set_up_environmental_data, echo=FALSE, eval=FALSE}
+
+turnover <- read.delim("SWI_environment_data.txt")
+
+to.data <- ddply(turnover, "Date", summarise,
+               N.doc = length(DOC),
+               mean.doc = mean(DOC),
+               sd.doc   = sd(DOC),
+               se.doc   = sd.doc / sqrt(N.doc),
+                 N.to = length(Inverse),
+               mean.to = mean(Inverse),
+               sd.to   = sd(Inverse),
+               se.to   = sd.to / sqrt(N.to),
+                 N.ba = length(BA),
+               mean.ba = mean(BA),
+               sd.ba   = sd(BA),
+               se.ba   = sd.ba / sqrt(N.ba),
+                 N.leu = length(BP),
+               mean.leu = mean(BP),
+               sd.leu  = sd(BP),
+               se.leu   = sd.leu / sqrt(N.leu))
+
+
+
+to.data$Date <- as.Date(to.data$Date,"%m/%d/%y")
+
+```
+
+```{r plot_environmental_data, echo=FALSE, eval=FALSE}
+
+min=as.Date("2013-07-26")
+max=as.Date("2013-12-15")
+exp1.min=as.Date('2013-08-06')
+exp1.max=as.Date('2013-08-16')
+exp2.min=as.Date('2013-08-29')
+exp2.max=as.Date('2013-09-08')
+exp3.min=as.Date('2013-10-26')
+exp3.max=as.Date('2013-11-06')
+exp4.min=as.Date('2013-11-27')
+exp4.max=as.Date('2013-12-07')
+
+p.to <- ggplot(to.data[!is.na(to.data$mean.to),], aes(x=Date)) +
+    geom_point(aes(y=mean.to), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.to-se.to, ymax=mean.to+se.to), 
+                  width=.1) +
+    xlab("") + 
+    ylab(expression(paste("Turnover (", day^{-1}, ")"))) +
+      scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_line(aes(y=mean.to), size=0.5) + 
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9),
+        legend.position="none")
+
+p.ba <- ggplot(to.data[!is.na(to.data$mean.ba),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.ba), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), 
+                  width=.1) +
+    geom_line(aes(y=mean.ba), size=0.5) + 
+    xlab("") + 
+     ylab(expression(paste("BA (", l^{-1}, ")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  scale_y_continuous(breaks=c(1e8, 1.5e8, 2e8, 2.5e8),
+                     labels=c("1e8","1.5e8","2e8", "2.5e8")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9),
+        legend.position="none")
+
+p.leu <- ggplot(to.data[!is.na(to.data$mean.leu),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.leu), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), 
+                  width=.1) +
+    geom_line(aes(y=mean.leu), size=0.5) + 
+    xlab("") + 
+    ylab(expression(paste("BP (pmol ", l^{-1}, hour^{-1},")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9),
+        legend.position="none")
+
+p.doc <- ggplot(to.data[!is.na(to.data$mean.doc),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.doc), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.doc-se.doc, ymax=mean.doc+se.doc), 
+                  width=.1) +
+    geom_line(aes(y=mean.doc), size=0.5) + 
+    xlab("") + 
+       ylab(expression(paste("DOC (", mu, "mol ", l^{-1},")"))) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9),
+        legend.position="none")
+
+
+grid.arrange(p.ba,p.leu,p.to, bottom="Date")
+
+```
+
+
+
+
+
+# Figure 2. BA, BP, Turnover, and Richness
+
+```{r manip_otus, echo=FALSE}
+
+#convert the otu table to a data frame
+otutable_bac <- as.data.frame(otutable_bac)
+#grab the columns with data
+numberofsamples <- dim(otutable_bac)[2] - 1
+otutable_bac_samples <- otutable_bac[,(2:numberofsamples)]
+#transpose
+otutable_bac_samples_t <- t(otutable_bac_samples)
+#use column 1 from original table as column names in new table
+colnames(otutable_bac_samples_t) <- otutable_bac[,1]
+
+new_otutable_bac_samples_t <- otutable_bac_samples_t[order(row.names(otutable_bac_samples_t)), ]
+otutable_bac_samples_t <- as.data.frame(new_otutable_bac_samples_t)
+```
+
+```{r calculate_richness, echo=FALSE}
+
+# otutable_meta_DOM_df <- as.data.frame(otutable_meta_DOM)
+# otutable_samples_DOM <- otutable_meta_DOM_df[,-(18208:18232)]
+
+#calculate richness by site
+richness <- diversityresult(otutable_bac_samples_t, 
+                              index='richness', method='s')
+shannon <- diversityresult(otutable_bac_samples_t, 
+                              index='Shannon', method='s')
+evenness <- diversityresult(otutable_bac_samples_t, 
+                              index='Jevenness', method='s')
+
+richness_meta <- cbind(meta_sorted[86:166,], richness, shannon, evenness)
+
+```
+
+```{r plot_richness, echo=FALSE}
+
+rich_data <- ddply(richness_meta, c("Month", "Day", "Treatment"), summarise,
+               N.rich = length(richness),
+               mean.rich = mean(richness),
+               sd.rich   = sd(richness),
+               se.rich   = sd.rich / sqrt(N.rich),
+                N.shan = length(Shannon),
+               mean.shan = mean(Shannon),
+               sd.shan   = sd(Shannon),
+               se.shan   = sd.shan / sqrt(N.shan),
+                N.even = length(Jevenness),
+               mean.even = mean(Jevenness),
+               sd.even   = sd(Jevenness),
+               se.even   = sd.even / sqrt(N.even))
+
+anc_data <- ddply(meta_sorted, c("Month", "Day", "Treatment"), summarise,
+               N.leu = length(Production),
+               mean.leu = mean(Production),
+               sd.leu   = sd(Production),
+               se.leu   = sd.leu / sqrt(N.leu),
+               N.ba = length(SGtotal),
+               mean.ba = mean(SGtotal),
+               sd.ba   = sd(SGtotal),
+               se.ba   = sd.ba / sqrt(N.ba),
+               N.to = length(InverseTurnover),
+               mean.to = mean(InverseTurnover),
+               sd.to   = sd(InverseTurnover),
+               se.to   = sd.to / sqrt(N.to))
+
+rich_data$Month = factor(rich_data$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+anc_data$Month = factor(anc_data$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9")
+
+richness_plot <- ggplot(rich_data, aes(x=Day, y=mean.rich, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.rich-se.rich, ymax=mean.rich+se.rich), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab("Richness (# OTUs)") +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.rich <- richness_plot + facet_grid(.~Month)
+
+ann_text <- data.frame(Day = 10,mean.rich=2250,lab = "Text", Treatment="Control",
+                       Month = factor("December",levels = c("August","September",
+                                                        "October", "December")))
+facet.rich.ann <- facet.rich + geom_text(data = ann_text,label = "C", show.legend = FALSE)
+
+leu_plot <- ggplot(anc_data[which(anc_data$Treatment=="Control" | 
+                                    anc_data$Treatment=="DOM"),], aes(x=Day, y=mean.leu, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.leu-se.leu, ymax=mean.leu+se.leu), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("BP (pmol ", l^{-1}, hour^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.leu <- leu_plot + facet_grid(.~Month)
+
+ann_text_leu <- data.frame(Day = 10,mean.leu=390,lab = "Text", Treatment="Control",
+                       Month = factor("December",levels = c("August","September",
+                                                        "October", "December")))
+facet.leu.ann <- facet.leu + geom_text(data = ann_text_leu,label = "A",show.legend = FALSE)
+
+
+
+ba_plot <- ggplot(anc_data[!is.na(anc_data$mean.ba),], aes(x=Day, y=mean.ba, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(500000, 1000000, 1500000), 
+                       label = c("5e5", "1e6","1.5e6")) +
+    ylab(expression(paste("BA (", ml^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+
+facet.ba <- ba_plot + facet_grid(.~Month)
+
+ann_text_ba <- data.frame(Day = 10,mean.ba=1600000,lab = "Text", Treatment="Control", Month = factor("December",levels = c("August","September",
+                                                        "October", "December")))
+facet.ba.ann <- facet.ba + geom_text(data = ann_text_ba,label = "B", show.legend = FALSE)
+
+to_plot <- ggplot(anc_data[!is.na(anc_data$mean.to),], aes(x=Day, y=mean.to, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.to-se.to, ymax=mean.to+se.to), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    #scale_y_continuous(breaks=c(500000, 1000000, 1500000), 
+     #                  label = c("5e5", "1e6","1.5e6")) +
+    ylab(expression(paste("Turnover (", day^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+facet.to <- to_plot + facet_grid(.~Month)
+
+
+
+panel.rich <- ggplot_gtable(ggplot_build(facet.rich))
+panel.leu <- ggplot_gtable(ggplot_build(facet.leu))
+panel.ba <- ggplot_gtable(ggplot_build(facet.ba))
+panel.to <- ggplot_gtable(ggplot_build(facet.to))
+
+maxWidth1 = grid::unit.pmax(panel.leu$widths[2:3], 
+                     panel.rich$widths[2:3],
+                     panel.ba$widths[2:3],
+                     panel.to$widths[2:3])
+
+panel.leu$widths[2:3] <- maxWidth1
+panel.rich$widths[2:3] <- maxWidth1
+panel.ba$widths[2:3] <- maxWidth1
+panel.to$widths[2:3] <- maxWidth1
+
+
+grid.arrange(panel.ba, panel.leu, panel.to, panel.rich, heights = c(2, 2, 2, 2), bottom="Day")
+
+
+```
+
+```{r richness_supplement, echo=FALSE}
+
+shannon_plot <- ggplot(rich_data, aes(x=Day, y=mean.shan, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.shan-se.shan, ymax=mean.shan+se.shan), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab("Shannon diversity") +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.shannon <- shannon_plot + facet_grid(.~Month)
+
+
+even_plot <- ggplot(rich_data, aes(x=Day, y=mean.even, colour=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.even-se.even, ymax=mean.even+se.even), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15),
+                       labels=c("Control","DOM+","f/2")) +
+    scale_x_continuous(name="", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab("Pielou's evenness") +
+    scale_colour_manual(values=cbbPalette,
+                        labels=c("Control","DOM+","f/2")) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5))
+
+facet.even <- even_plot + facet_grid(.~Month)
+
+grid.arrange(facet.shannon, facet.even, bottom="Day")
+
+```
+
+
+
+```{r anova_richness_bp_ba, echo=FALSE}
+
+# Independent variables are: Month, Treatment, Day, and Carboy
+
+# Dependent variables are anything after the Carboy column. 
+# Richness is of particular interest.
+
+data_for_lme_Sept15 <- read.csv("~/projects/cat/data_for_lme_Sept15.csv", stringsAsFactors=FALSE)
+
+library(lme4)
+
+data_for_lme_Sept15$Carboy <- as.factor(data_for_lme_Sept15$Carboy)
+data_for_lme_Sept15$Treatment <- as.factor(data_for_lme_Sept15$Treatment)
+data_for_lme_Sept15$Month <- as.factor(data_for_lme_Sept15$Month)
+
+## carboy as random effect
+mm.null <- lmer(richness ~ Month + Day + (1|Carboy), data = data_for_lme_Sept15,
+            REML = FALSE)
+summary(mm.null)
+
+mm.trt <- lmer(richness ~ Month + Treatment + Day + (1|Carboy), data = data_for_lme_Sept15,
+                REML = FALSE)
+summary(mm.trt)
+
+anova(mm.trt, mm.null)
+
+## use Month as random effect
+mm.null <- lmer(richness ~ Day + (1|Month), data = data_for_lme_Sept15,
+                REML = FALSE)
+summary(mm.null)
+
+mm.trt <- lmer(richness ~ Treatment + Day + (1|Month), data = data_for_lme_Sept15,
+               REML = FALSE)
+summary(mm.trt)
+
+anova(mm.trt, mm.null)
+
+## not usig "fm2" treatment
+
+## carboy as random effect
+mm.null <- lmer(richness ~ Month + Day + (1|Carboy),
+                data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")),
+                REML = FALSE)
+summary(mm.null)
+
+mm.trt <- lmer(richness ~ Month + Treatment + Day + (1|Carboy), 
+               data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")),
+               REML = FALSE)
+summary(mm.trt)
+
+anova(mm.trt, mm.null)
+
+
+## fixing carboy
+data_for_lme_Sept15$CarboyMnth <- as.factor(paste(data_for_lme_Sept15$Month, data_for_lme_Sept15$Carboy))
+
+## random slope
+mm.trt <- lmer(richness ~ Month + Treatment + Day + (1|CarboyMnth), 
+               data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")),
+               REML = FALSE)
+
+
+boxplot(richness ~ CarboyMnth, data=data_for_lme_Sept15)
+library(lattice)
+
+bwplot(richness~ Carboy|Month+Treatment, data=data_for_lme_Sept15)
+
+## Only fixed effects since Carboy doesnt add any measurable random effect
+
+# effect of treatment
+
+lm.null <- lm(SGtotal ~ Month + Day,
+              data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+lm.trt <- lm(SGtotal ~ Month + Treatment + Day,
+              data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+
+anova(lm.null, lm.trt)
+
+# effect of Day
+
+lm.null <- lm(SGtotal ~ Month + Treatment,
+              data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+lm.trt <- lm(SGtotal ~ Month + Treatment + Day,
+             data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+
+anova(lm.null, lm.trt)
+
+# effect of Month
+lm.null <- lm(SGtotal ~ Day + Treatment,
+              data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+lm.trt <- lm(SGtotal ~ Month + Treatment + Day,
+             data = subset(data_for_lme_Sept15,Treatment %in% c("Control","DOM")))
+
+anova(lm.null, lm.trt)
+
+
+```
+
+
+```{r lm_richness, echo=FALSE}
+
+summary(lm(richness~Production, data=richness_meta)) #r=0.25, p=1e-6
+summary(lm(richness~Production+Day, data=richness_meta)) #r=0.72, p<2.2e-16
+summary(lm(richness~Day, data=richness_meta)) #r=0.71, p<2.2e-16
+summary(lm(richness~Treatment, data=richness_meta)) #r=0.02, p=0.18
+summary(lm(richness~Treatment+Day, data=richness_meta)) #r=0.72, p<2.2e-16
+summary(lm(richness~Chlorophyll, data=richness_meta)) #r=0.06, p=0.01
+summary(lm(richness~SGtotal, data=richness_meta)) #r=0.35, p=3e-8
+summary(lm(richness~SGtotal+Day, data=richness_meta)) #r=0.70, p<2.2e-16
+
+
+```
+
+```{r anova_production, echo=FALSE}
+
+
+```
+
+
+```{r anova_abundance, echo=FALSE}
+
+
+```
+
+
+# Figure 3. OTU bar graph
+
+## Identifying and graphing top OTUs
+```{r top_OTUs_all_exp}
+
+#order meta
+idx_meta <- order(meta$MetadataLine, decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+meta_sorted.all <- meta_sorted[c(1:6,19:24,31:42,55:60,67:75,79:81,103:108,118:120,124:126,131:136,149:153,160:165),]
+
+otu_table_mc2_DOM_even64271_bac_from_biom <- read.delim("cdout_DOM_bac/otu_table_mc2_DOM_even64271_bac_from_biom.txt", skip=1)
+
+otu_table_mc2_DOM_even64271_bac_from_biom.normalized <-
+  cbind(OTUID=otu_table_mc2_DOM_even64271_bac_from_biom$X.OTU.ID,
+        otu_table_mc2_DOM_even64271_bac_from_biom[,2:82]/colSums(otu_table_mc2_DOM_even64271_bac_from_biom[,2:82]),
+        taxonomy=otu_table_mc2_DOM_even64271_bac_from_biom$taxonomy)
+
+otu <- 
+  otu_table_mc2_DOM_even64271_bac_from_biom.normalized[,order(colnames(otu_table_mc2_DOM_even64271_bac_from_biom.normalized))]
+otu.all <- otu[,-c(40:42,55:57,61:64)]
+
+
+otu.all$name <- paste(otu.all$taxonomy, "(", otu.all$OTUID, ")", sep="")
+
+otu.all.df <- as.data.frame(otu.all)
+otu.all.df$ave <- rowMeans(otu.all.df[,0:68])
+otu.all.order <- otu.all.df[order(-otu.all.df$ave),]
+rownames(otu.all.order) <- otu.all.order$OTUID
+otu.toplist <- otu.all.order[1:12,-c(72:75)]
+otu.toplist.t <- t(otu.toplist)
+
+
+topotu.t.meta.all <- data.frame(meta_sorted.all$LibraryID, meta_sorted.all$Month, meta_sorted.all$Day, meta_sorted.all$Treatment, otu.toplist.t)
+colnames(topotu.t.meta.all)[1] <- "LibraryID"
+colnames(topotu.t.meta.all)[2] <- "Month"
+colnames(topotu.t.meta.all)[3] <- "Day"
+colnames(topotu.t.meta.all)[4] <- "Treatment"
+
+topotu.t.meta.all[topotu.t.meta.all == "f2"] <- "Control"
+
+otumelt.all <- melt(topotu.t.meta.all, id.vars=(c("LibraryID", "Month", "Day","Treatment")))
+colnames(otumelt.all) <- c("LibraryID", "Month","Day","Treatment", "OTU", "Abundance")
+
+tdata.all <- ddply(otumelt.all, c("Month", "Day", "Treatment", "OTU"), summarise,
+                           N = length(Abundance),
+                           mean = mean(Abundance),
+                           sd   = sd(Abundance),
+                           se   = sd / sqrt(N)
+)
+
+tdata.all$Day <- as.factor(tdata.all$Day)
+tdata.all$Month = factor(tdata.all$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+
+levels(tdata.all$Day) <- c("Day 0", "Day 6", "Day 10")
+
+day_labeller <- function(var, value){
+  value <- Day
+  if (var=="Day") { 
+    value[value=="0"] <- "Day 0"
+    value[value=="6"]   <- "Day 6"
+    value[value=="10"]   <- "Day 10"
+  }
+  return(value)
+}
+
+
+p.all <- ggplot(data = tdata.all, aes(x = Treatment, y = mean, fill = OTU)) + 
+  geom_bar(stat="identity", color="black", size=0) +
+  scale_fill_brewer(palette="Paired",
+                      labels=c("Pelagibacteraceae (838668)",
+                               "Collwelliaceae (819278)",
+                        expression(paste(italic("Polaribacter"), " (907828)")),
+                               "Oceanospirillales (884345)",
+                               "Rhodobacteraceae (812461)",
+                                "Pelagibacteraceae (1016465)",
+                                "Collwelliaceae (776657)",
+                                "Collwelliaceae (644016)",
+                                "NS9 (1001040)",
+                               "Flavobacteriaceae (277620)",
+                               "Flavobacteriaceae (909231)",
+                                 "Oceanospirillaceae (970344)"),
+                    guide = guide_legend(reverse=TRUE)) +
+  ylab("Relative abundance") +
+  #ggtitle("August") +
+  xlab("") +
+  theme_bw() +
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+
+
+p.all + facet_grid(Month~Day)
+
+```
+
+```{r}
+#order meta
+idx_meta <- order(meta$MetadataLine, decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+meta_sorted.all <- meta_sorted[c(1:6,19:24,31:42,55:60,67:75,79:81,103:108,118:120,124:126,131:136,149:153,160:165),]
+
+otu_table_mc2_DOM_even64271_bac_from_biom <- read.delim("cdout_DOM_bac/otu_table_mc2_DOM_even64271_bac_from_biom.txt", skip=1)
+
+otu_table_mc2_DOM_even64271_bac_from_biom.normalized <-
+  cbind(OTUID=otu_table_mc2_DOM_even64271_bac_from_biom$X.OTU.ID,
+        otu_table_mc2_DOM_even64271_bac_from_biom[,2:82]/colSums(otu_table_mc2_DOM_even64271_bac_from_biom[,2:82]),
+        taxonomy=otu_table_mc2_DOM_even64271_bac_from_biom$taxonomy)
+
+otu <- 
+  otu_table_mc2_DOM_even64271_bac_from_biom.normalized[,order(colnames(otu_table_mc2_DOM_even64271_bac_from_biom.normalized))]
+otu.all <- otu[,-c(40:42,55:57,61:64)]
+
+
+otu.all$name <- paste(otu.all$taxonomy, "(", otu.all$OTUID, ")", sep="")
+
+otu.all.df <- as.data.frame(otu.all)
+otu.all.df$ave <- rowMeans(otu.all.df[,0:68])
+otu.all.order <- otu.all.df[order(-otu.all.df$ave),]
+rownames(otu.all.order) <- otu.all.order$OTUID
+otu.toplist <- otu.all.order[c(2,3,1),-c(72:75)]
+otu.toplist.t <- t(otu.toplist)
+
+
+topotu.t.meta.all <- data.frame(meta_sorted.all$LibraryID, meta_sorted.all$Month, meta_sorted.all$Day, meta_sorted.all$Treatment, otu.toplist.t)
+colnames(topotu.t.meta.all)[1] <- "LibraryID"
+colnames(topotu.t.meta.all)[2] <- "Month"
+colnames(topotu.t.meta.all)[3] <- "Day"
+colnames(topotu.t.meta.all)[4] <- "Treatment"
+
+topotu.t.meta.all[topotu.t.meta.all == "f2"] <- "Control"
+
+otumelt.all <- melt(topotu.t.meta.all, id.vars=(c("LibraryID", "Month", "Day","Treatment")))
+colnames(otumelt.all) <- c("LibraryID", "Month","Day","Treatment", "OTU", "Abundance")
+
+tdata.all <- ddply(otumelt.all, c("Month", "Day", "Treatment", "OTU"), summarise,
+                           N = length(Abundance),
+                           mean = mean(Abundance),
+                           sd   = sd(Abundance),
+                           se   = sd / sqrt(N)
+)
+
+tdata.all$Day <- as.factor(tdata.all$Day)
+tdata.all$Month = factor(tdata.all$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+
+levels(tdata.all$Day) <- c("Day 0", "Day 6", "Day 10")
+
+day_labeller <- function(var, value){
+  value <- Day
+  if (var=="Day") { 
+    value[value=="0"] <- "Day 0"
+    value[value=="6"]   <- "Day 6"
+    value[value=="10"]   <- "Day 10"
+  }
+  return(value)
+}
+
+
+p.all <- ggplot(data = tdata.all, aes(x = Treatment, y = mean, fill = OTU)) + 
+  geom_bar(stat="identity") +
+  scale_fill_manual(name="Top 3\nOperational\nTaxonomic Units",
+                      values=c("#FF9999","#CC3333","#99CCFF","#0066CC"),
+                      labels=c("Collwelliaceae",
+                        expression(paste(italic("Polaribacter"))),
+                               "Pelagibacteraceae",
+                               "Oceanospirillales"),
+                    guide = guide_legend(reverse=TRUE)) +
+  ylab("Relative abundance") +
+  #ggtitle("August") +
+  xlab("") +
+  theme_bw() +
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+
+
+p.all + facet_grid(Month~Day)
+
+
+p.all <- ggplot(data = tdata.all, aes(x = Treatment, y = mean, fill = OTU)) + 
+  geom_line() +
+  scale_color_manual(name="Top 3\nOperational\nTaxonomic Units",
+                      values=c("#FF9999","#CC3333","#99CCFF","#0066CC"),
+                      labels=c("Collwelliaceae",
+                        expression(paste(italic("Polaribacter"))),
+                               "Pelagibacteraceae",
+                               "Oceanospirillales"),
+                    guide = guide_legend(reverse=TRUE)) +
+  ylab("Relative abundance") +
+  #ggtitle("August") +
+  xlab("") +
+  theme_bw() +
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+
+
+p.all + facet_grid(Month~Day)
+
+
+```
+
+
+# Figure 4. OTU treatment effects
+
+```{r treatment_effects}
+
+write.csv(topotu.t.meta.all, "otus_for_treatment_effect.csv")
+
+otu.te <- read.delim("treatment_effect.txt")
+
+otu.te.big <- otu.te[,-c(8, 10:14)]
+
+te.melt <- melt(otu.te.big, id.vars=(c("Month", "Day")))
+
+colnames(te.melt) <- c("Month","Day","OTU", "Abundance")
+
+pal <- c("#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C", "#FB9A99", "#FDBF6F")
+
+p.te <- ggplot(data = te.melt, aes(x = Day, y = Abundance, color = OTU, group=OTU)) + 
+  geom_point(size=2) +
+  geom_line(size=1) +
+  scale_colour_manual(values=pal,
+                      labels=c("Pelagibacteraceae (838668)",
+                               "Collwelliaceae (819278)",
+                        expression(paste(italic("Polaribacter"), " (907828)")),
+                               "Oceanospirillales (884345)",
+                               "Rhodobacteraceae (812461)",
+                                "Collwelliaceae (776657)")) +
+  scale_x_continuous(breaks=c(0,2,4,6,8,10)) +
+  xlab("") + 
+  ylab("Difference between treatments (%DOM+ - %Control)") +
+  geom_hline(yintercept=0) +
+  theme_bw() +
+   theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+p.te + facet_grid(Month~.)
+
+
+
+```
+
+
+```{r check_abundance_collwellcia}
+
+DOM_otu <- read.delim("cdout_DOM_bac/otu_table_mc2_DOM_even64271_bac_from_biom.txt", skip=1)
+
+SWI_otu <- read.delim('/Users/cmluria/Documents/Documents/Thesis Chapters/SWI/otus/cdout_SWI_bac/otu_table_mc2_SWI_even43308_bac_from_biom.txt', skip=1)
+
+# ===============threshold function ===============================
+thresh_filter_max <- function(v,t,c){
+  table(v >= t)['TRUE'] <=c
+}
+
+thresh_select_max <- function(data,threshold=433, cols=3){
+  which(apply(data,2, thresh_filter_max,threshold,cols))
+}
+#================================================
+
+
+idx_abundant <- thresh_select(DOM_otu, 1, 0.20*81)
+# select the indexed rows
+DOM_otu.abundant <- DOM_otu[idx_abundant,]
+
+
+idx <- grep('Colwelliaceae',x = DOM_otu$taxonomy)
+DOM_otu_Col <- DOM_otu[idx,]
+sum(rowSums(DOM_otu_Col[,2:82]))/(81*64271)
+DOM_otu_Col$ave <- rowMeans(DOM_otu_Col[,2:82])/64271
+DOM_otu_Col <- DOM_otu_Col[order(-DOM_otu_Col$ave),]
+DOM_otu_Col_top <- t(DOM_otu_Col[1:13,])
+DOM_otu_Col_top <- DOM_otu_Col_top[order(rownames(DOM_otu_Col_top)),]
+colnames(DOM_otu_Col_top) <- DOM_otu_Col$X.OTU.ID[1:13]
+DOM_otu_Col_top_meta <- cbind(
+  meta_sorted$Treatment[86:166],
+  meta_sorted$Day[86:166],
+  DOM_otu_Col_top[2:82,])
+
+idx_abundant2 <- thresh_select(SWI_otu, 1, 3)
+# select the indexed rows
+SWI_otu.abundant <- SWI_otu[idx_abundant,]
+
+idx2 <- grep('Colwelliaceae',x = SWI_otu$taxonomy)
+SWI_otu_Col <- SWI_otu[idx2,]
+sum(rowSums(SWI_otu_Col[,2:69]))/(68*43308)
+SWI_otu_Col$ave <- rowMeans(SWI_otu_Col[,2:69])/43308
+SWI_otu_Col <- SWI_otu_Col[order(-SWI_otu_Col$ave),]
+SWI_otu_Col_top <- t(SWI_otu_Col[1:5,])
+SWI_otu_Col_top <- SWI_otu_Col_top[order(rownames(SWI_otu_Col_top)),]
+colnames(SWI_otu_Col_top) <- SWI_otu_Col$OTUID[1:5]
+
+
+
+
+
+```
+
+# Figure 4. NMDS
+
+```{r nmds}
+
+mds <- metaMDS(otutable_bac_samples_t, dist="bray", k=2, autotransform=T)
+coded.mds <- cbind(mds$points, richness_meta)
+
+coded.mds$Day <- as.factor(coded.mds$Day)
+coded.mds$Treatment <- as.factor(coded.mds$Treatment)
+coded.mds$Experiment <- as.factor(coded.mds$Experiment)
+
+coded.mds <- coded.mds[-(61:64,),]
+
+```
+
+
+```{r nmds_ggplot, eval=FALSE}
+ggplot(coded.mds[which(coded.mds$Experiment=="1")], 
+       aes(x=MDS1, y=MDS2, shape=Treatment, color=Day)) +
+  geom_point(size=5) +
+  scale_shape_manual(values=c(17, 20)) +
+  scale_color_manual(values=c("#99d8c9", "#2ca25f", "#006d2c")) +
+  xlim(c(-1.0,1.0)) +
+  ylim(c(-1.0,1.0)) +
+  theme_bw()
+
+
+```
+
+
+```{r nmds_manual_plot_total, eval=FALSE}
+
+plot.new()
+plot.window(xlim=c(-1,1), ylim=c(-1,1))
+axis(1)
+axis(2)
+box()
+
+# ================== Experiment 1 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#0072B2", bg="#ccece6", pch=1, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#0072B2", bg="#66c2a4",pch=10, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#0072B2", bg="#006d2c", pch=19, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#E69F00", bg="#ccece6", pch=1, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#E69F00", bg="#66c2a4",pch=10, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")],
+       col="#E69F00", bg="#006d2c", pch=19, cex=1.5)
+
+# ================== Experiment 2 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#d4b9da", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#df65b0", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#980043", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#d4b9da", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#df65b0", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#980043", pch=24, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#d0d1e6", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#74a9cf", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#045a8d", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#d0d1e6", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#74a9cf", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+        col="black", bg="#045a8d", pch=24, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#fdd49e", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#fc8d59", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#b30000", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#fdd49e", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#fc8d59", pch=24, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#b30000", pch=24, cex=1.5)
+
+```
+
+
+```{r nmds_manual_plot_different_colors_exp1}
+
+## plot with triangles ancircles for treatments, and a different color scheme for each experiments, grey shadows for experiment that is not featured
+
+plot.new()
+plot.window(xlim=c(-1,1), ylim=c(-1,1))
+axis(1)
+axis(2)
+box()
+
+
+# =============== EXPERIMENT 2 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 3 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="f2" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="f2"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 4 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 1 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#fed976", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#99d8c9",pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#006d2c", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#fed976", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#99d8c9",pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#006d2c", pch=25, cex=1)
+
+
+
+```
+
+```{r nmds_manual_plot_different_colors_exp2}
+
+## plot with triangles ancircles for treatments, and a different color scheme for each experiments, grey shadows for experiment that is not featured
+
+plot.new()
+plot.window(xlim=c(-1,1), ylim=c(-1,1))
+axis(1)
+axis(2)
+box()
+
+# =============== EXPERIMENT 1 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+
+
+# =============== EXPERIMENT 3 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="f2" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="f2"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 4 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 2 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#feebe2", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#f768a1", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#7a0177", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#feebe2", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#f768a1", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#7a0177", pch=25, cex=1)
+
+```
+
+```{r nmds_manual_plot_different_colors_exp3}
+
+plot.new()
+plot.window(xlim=c(-1,1), ylim=c(-1,1))
+axis(1)
+axis(2)
+box()
+
+# =============== EXPERIMENT 1 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+
+# =============== EXPERIMENT 2 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+
+
+## =================== EXPERIMENT 4 =========================
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+## ================ EXPERIMENT 3 ===========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#f6eff7", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="f2" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="f2"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#41b6c4", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#08519c", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#f6eff7", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#41b6c4", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+        col="black", bg="#08519c", pch=25, cex=1)
+
+```
+
+```{r nmds_manual_plot_different_colors_exp4}
+
+plot.new()
+plot.window(xlim=c(-1,1), ylim=c(-1,1))
+axis(1)
+axis(2)
+box()
+
+# =============== EXPERIMENT 1 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="0")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="1"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+
+# =============== EXPERIMENT 2 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="6")], 
+      col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="2"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+# =============== EXPERIMENT 3 ==========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="f2" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="f2"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="0")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="6")], 
+       col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="3"
+                            & coded.mds$Day=="10")], 
+        col="#d9d9d9", bg="#d9d9d9", pch=25, cex=1)
+
+## ==================== EXPERIMENT 4 ===========================
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#ffffb2", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#feb24c", pch=21, cex=1.5)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="Control" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="Control"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#bd0026", pch=21, cex=1.5)
+
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="0")], 
+       col="black", bg="#ffffb2", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="6")], 
+       col="black", bg="#feb24c", pch=25, cex=1)
+points(coded.mds$MDS1[which(coded.mds$Treatment=="DOM" 
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       coded.mds$MDS2[which(coded.mds$Treatment=="DOM"
+                            & coded.mds$Experiment=="4"
+                            & coded.mds$Day=="10")], 
+       col="black", bg="#bd0026", pch=25, cex=1)
+
+
+```
+
+
+
+# Supplemental Figures. Ancillary Data
+
+```{r ancillary_data_facet_grids}
+
+meta <- fread('DOM.map.txt')
+
+#order meta according to MBL_library ID
+idx_meta <- order(meta$MetadataLine, decreasing=FALSE)
+meta_sorted <- meta[idx_meta]
+meta_trim <- meta_sorted[-c(127:130),]
+meta_trim$CtoN <- meta_trim$PC/meta_trim$PN
+
+
+adata <- ddply(meta_trim, c("Experiment", "Month", "Day", "Treatment"), summarise,
+               N.leu = length(Production),
+               mean.leu = mean(Production),
+               sd.leu   = sd(Production),
+               se.leu   = sd.leu / sqrt(N.leu),
+               N.pho    = length(Phosphate),
+               mean.pho = mean(Phosphate),
+               sd.pho   = sd(Phosphate),
+               se.pho   = sd.pho / sqrt(N.pho),
+               N.sil    = length(Silicate),
+               mean.sil = mean(Silicate),
+               sd.sil   = sd(Silicate),
+               se.sil   = sd.sil / sqrt(N.sil),
+               N.nit    = length(NitrateNitrite),
+               mean.nit = mean(NitrateNitrite),
+               sd.nit   = sd(NitrateNitrite),
+               se.nit   = sd.nit / sqrt(N.nit),
+               N.pc     = length(PC),
+               mean.pc  = mean(PC),
+               sd.pc   = sd(PC),
+               se.pc   = sd.pc / sqrt(N.pc),
+               N.pn    = length(PN),
+               mean.pn = mean(PN),
+               sd.pn   = sd(PN),
+               se.pn   = sd.pn / sqrt(N.pn),
+               N.chla    = length(Chlorophyll),
+               mean.chla = mean(Chlorophyll),
+               sd.chla   = sd(Chlorophyll),
+               se.chla   = sd.chla / sqrt(N.chla),
+               N.ba    = length(SGtotal),
+               mean.ba = mean(SGtotal),
+               sd.ba   = sd(SGtotal),
+               se.ba   = sd.ba / sqrt(N.ba),
+               N.cn    = length(CtoN),
+               mean.cn = mean(CtoN),
+               sd.cn   = sd(CtoN),
+               se.cn   = sd.cn / sqrt(N.cn),
+                 se.ba   = sd.ba / sqrt(N.ba),
+               N.doc   = length(DOC),
+               mean.doc = mean(DOC),
+               sd.doc   = sd(DOC),
+               se.doc   = sd.doc / sqrt(N.doc)
+)
+
+adata$Month = factor(adata$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+
+adata.aug <- adata[which(adata$Experiment=="1"),]
+adata.sep <- adata[which(adata$Experiment=="2"),]
+adata.oct <- adata[which(adata$Experiment=="3"),]
+adata.dec <- adata[which(adata$Experiment=="4"),]
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9")
+
+
+
+p.chla <- ggplot(data = adata, aes(x = Day, y = mean.chla, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.chla-se.chla, ymax=mean.chla+se.chla), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Chl ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=10))
+
+p.doc <- ggplot(data = adata, aes(x = Day, y = mean.doc, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.doc-se.doc, ymax=mean.doc+se.doc), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("DOC (", mu, "mol ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=10))
+
+p.pc <- ggplot(data = adata[!is.na(adata$mean.pc),], aes(x = Day, y = mean.pc, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.pc-se.pc, ymax=mean.pc+se.pc), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("POC (", mu, "g  ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette) +
+   theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=10))
+
+p.pn <- ggplot(data = adata[!is.na(adata$mean.pn),], aes(x = Day, y = mean.pn, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.pn-se.pn, ymax=mean.pn+se.pn), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("PON (", mu, "g  ", l^{-1},")"))) +
+    scale_colour_manual(values=cbbPalette) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=10))
+
+# p.cn <- ggplot(data = adata[!is.na(adata$mean.cn),], aes(x = Day, y = mean.cn, color=Treatment)) + 
+#   geom_errorbar(aes(ymin=mean.cn-se.cn, ymax=mean.cn+se.cn), width=.1) +
+#     geom_line() +
+#     geom_point(aes(shape=Treatment)) +
+#     scale_shape_manual(values=c(20,17,15)) +
+#     scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+#     scale_y_continuous() +
+#     ylab("POC:PON") +
+#     scale_colour_manual(values=cbbPalette) +
+#     theme_bw() 
+
+p.nit <- ggplot(data = adata[!is.na(adata$mean.nit),], aes(x = Day, y = mean.nit, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.nit-se.nit, ymax=mean.nit+se.nit), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(20, 25, 30)) +
+    ylab(expression(paste("Nitrate & nitrite (", mu, "mol ", l^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p.sil <- ggplot(data = adata[!is.na(adata$mean.sil),], aes(x = Day, y = mean.sil, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.sil-se.sil, ymax=mean.sil+se.sil), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous(breaks=c(57,60,63,66)) +
+    ylab(expression(paste("Silicate (", mu, "mol ", l^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette) +
+   theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+p.pho <- ggplot(data = adata[!is.na(adata$mean.pho),], aes(x = Day, y = mean.pho, color=Treatment)) + 
+  geom_errorbar(aes(ymin=mean.pho-se.pho, ymax=mean.pho+se.pho), width=.1) +
+    geom_line() +
+    geom_point(aes(shape=Treatment)) +
+    scale_shape_manual(values=c(20,17,15)) +
+    scale_x_continuous(name="Day", breaks=c(0,2,4,6,8,10)) +
+    scale_y_continuous() +
+    ylab(expression(paste("Phosphate (", mu, "mol ", l^{-1}, ")"))) +
+    scale_colour_manual(values=cbbPalette) +
+    theme_classic() +
+    theme(text = element_text(size=10),
+          panel.margin=unit(.05, "lines"),
+        panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+        axis.text.y=element_text(angle=90, hjust=0.5),
+        axis.title.y=element_text(size=9))
+
+
+facet.doc <- p.doc + facet_grid(.~Month)
+facet.chla <- p.chla + facet_grid(.~Month)
+facet.pc <- p.pc + facet_grid(.~Month)
+facet.pn <- p.pn + facet_grid(.~Month)
+#facet.cn <- p.cn + facet_grid(.~Month)
+facet.nit <- p.nit + facet_grid(.~Month)
+facet.sil <- p.sil + facet_grid(.~Month)
+facet.pho <- p.pho + facet_grid(.~Month)
+
+#multiplot(facet.chla, facet.pc, facet.pn, cols = 1)
+#multiplot(facet.nit, facet.pho, facet.sil, cols = 1)
+
+panel.pho <- ggplot_gtable(ggplot_build(facet.pho))
+panel.sil <- ggplot_gtable(ggplot_build(facet.sil))
+panel.nit <- ggplot_gtable(ggplot_build(facet.nit))
+
+maxWidth1 = unit.pmax(panel.pho$widths[2:3], panel.sil$widths[2:3], 
+                     panel.nit$widths[2:3])
+
+
+panel.pho$widths[2:3] <- maxWidth1
+panel.sil$widths[2:3] <- maxWidth1
+panel.nit$widths[2:3] <- maxWidth1
+
+
+grid.arrange(panel.pho, panel.sil, panel.nit, heights = c(2, 2, 2))
+
+# panel.ba <- ggplot_gtable(ggplot_build(facet.ba))
+# panel.chla <- ggplot_gtable(ggplot_build(facet.chla))
+# 
+# maxWidth1 = unit.pmax(panel.chla$widths[2:3], panel.ba$widths[2:3])
+# 
+# panel.ba$widths[2:3] <- maxWidth1
+# panel.chla$widths[2:3] <- maxWidth1
+# 
+# grid.arrange(panel.chla, panel.ba, heights = c(2, 2))
+
+panel.chla <- ggplot_gtable(ggplot_build(facet.chla))
+panel.doc <- ggplot_gtable(ggplot_build(facet.doc))
+panel.pc <- ggplot_gtable(ggplot_build(facet.pc))
+panel.pn <- ggplot_gtable(ggplot_build(facet.pn))
+#panel.cn <- ggplot_gtable(ggplot_build(facet.cn))
+
+maxWidth1 = unit.pmax(panel.chla$widths[2:3],
+                      panel.doc$widths[2:3],
+                      panel.pc$widths[2:3], 
+                     panel.pn$widths[2:3])
+
+panel.chla$widths[2:3] <- maxWidth1
+panel.doc$widths[2:3] <- maxWidth1
+panel.pc$widths[2:3] <- maxWidth1
+panel.pn$widths[2:3] <- maxWidth1
+#panel.cn$widths[2:3] <- maxWidth1
+
+grid.arrange(panel.chla, panel.pc, panel.pn, heights = c(2,2,2))
+
+
+
+
+```
+
+
+
+# Supplemental Plot X. Environmental ancillary data
+
+
+```{r ancillary_data_aggregate, echo=FALSE}
+
+meta <- fread('SWI_environment_data.txt')
+#idx_meta <- order(meta$'#SampleID', decreasing=FALSE)
+#meta_sorted <- meta[idx_meta]
+
+meta$Date <- as.Date(meta$Date,"%m/%d/%Y")
+
+#meta_sorted[meta_sorted == -999] <- NA
+
+adata <- ddply(meta, "Date", summarise,
+                 N.pho    = sum(!is.na(Phosphate)),
+                 mean.pho = mean(Phosphate, na.rm=TRUE),
+                 sd.pho   = sd(Phosphate, na.rm=TRUE),
+                 se.pho   = sd.pho / sqrt(N.pho),
+                N.sil    = sum(!is.na(Silicate)),
+                 mean.sil = mean(Silicate, na.rm=TRUE),
+                 sd.sil   = sd(Silicate, na.rm=TRUE),
+                 se.sil   = sd.sil / sqrt(N.sil),
+               N.nit    = sum(!is.na(NitrateNitrite)),
+                 mean.nit = mean(NitrateNitrite),
+                 sd.nit   = sd(NitrateNitrite),
+                 se.nit   = sd.nit / sqrt(N.nit),
+               N.pc    = sum(!is.na(PC)),
+                 mean.pc = mean(PC,na.rm=TRUE),
+                 sd.pc   = sd(PC,na.rm=TRUE),
+                 se.pc   = sd.pc / sqrt(N.pc),
+               N.pn    = sum(!is.na(PN)),
+                 mean.pn = mean(PN,na.rm=TRUE),
+                 sd.pn   = sd(PN,na.rm=TRUE),
+                 se.pn   = sd.pn / sqrt(N.pn),
+                N.temp    = sum(!is.na(Temp)),
+                 mean.temp = mean(Temp, na.rm=TRUE),
+                 sd.temp   = sd(Temp, na.rm=TRUE),
+                 se.temp   = sd.temp / sqrt(N.temp),
+               N.doc    = sum(!is.na(DOC)),
+                 mean.doc = mean(DOC,na.rm=TRUE),
+                 sd.doc   = sd(DOC,na.rm=TRUE),
+                 se.doc   = sd.doc / sqrt(N.doc),
+                N.chla    = length(Chl),
+                 mean.chla = mean(Chl),
+                 sd.chla   = sd(Chl),
+                 se.chla   = sd.chla / sqrt(N.chla)
+               )
+
+
+
+adata$SamplingDate <- as.Date(adata$Date,"%m/%d/%Y")
+
+
+
+min <- as.Date("0013-07-26")
+max <- as.Date("0013-12-15")
+
+exp1.min=as.Date('0013-08-06')
+exp1.max=as.Date('0013-08-16')
+exp2.min=as.Date('0013-08-29')
+exp2.max=as.Date('0013-09-08')
+exp3.min=as.Date('0013-10-26')
+exp3.max=as.Date('0013-11-06')
+exp4.min=as.Date('0013-11-27')
+exp4.max=as.Date('0013-12-07')
+
+
+```
+
+
+
+```{r ancillary_data_multiplot, echo=FALSE}
+extractmax.pho <- max(adata$mean.pho, na.rm=TRUE)
+labelheight.pho <- extractmax.pho*0.85
+
+g.pho <-ggplot(adata[!is.na(adata$mean.pho),], aes(x=Date)) +
+    annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.pho), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.pho-se.pho, ymax=mean.pho+se.pho), 
+                  width=.1) +
+    geom_line(aes(y=mean.pho)) + 
+    xlab("") + 
+    ylim(c(0,2.5))+
+    ylab(expression(paste("Phosphate (", mu, "mol ", l^{-1}, ")"))) +
+   scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  #scale_y_continuous(breaks=c(0,1,1.5,2, 2.5))+
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+
+g.sil <-ggplot(adata[!is.na(adata$mean.sil),], aes(x=Date)) +
+    annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.sil), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.sil-se.sil, ymax=mean.sil+se.sil), 
+                  width=.1) +
+    geom_line(aes(y=mean.sil)) + 
+    xlab("") + 
+    ylab(expression(paste("Silicate (", mu, "mol ", l^{-1}, ")"))) +
+  ylim(c(0,70)) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+
+g.nit <-ggplot(adata[!is.na(adata$mean.nit),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.nit), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.nit-se.nit, ymax=mean.nit+se.nit), 
+                  width=.1) +
+    geom_line(aes(y=mean.nit)) + 
+    xlab("") + 
+    ylab(expression(paste("Nitrate & nitrite (", mu, "mol ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+
+g.pc <-ggplot(adata[!is.na(adata$mean.pc),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.pc), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.pc-se.pc, ymax=mean.pc+se.pc), 
+                  width=.1) +
+    geom_line(aes(y=mean.pc)) + 
+    xlab("") + 
+    ylab(expression(paste("POC (", mu, "g ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+
+g.pn <-ggplot(adata[!is.na(adata$mean.pn),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.pn), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.pn-se.pn, ymax=mean.pn+se.pn), 
+                  width=.1) +
+    geom_line(aes(y=mean.pn)) + 
+    xlab("") + 
+    ylab(expression(paste("PON (", mu, "g ", l^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+g.chla <-ggplot(adata[!is.na(adata$mean.chla),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.chla), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.chla-se.chla, ymax=mean.chla+se.chla), 
+                  width=.1) +
+    geom_line(aes(y=mean.chla)) + 
+    xlab("") + 
+    ylab(expression(paste("Chlorophyll ", italic("a "), "(", mu, "g  ", l^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+g.doc <- ggplot(adata[!is.na(adata$mean.doc),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+     geom_point(aes(y=mean.doc), shape=20, na.rm=T, size=2) +
+     geom_errorbar(aes(ymin=mean.doc-se.doc, ymax=mean.doc+se.doc),
+                   width=.1) +
+     geom_line(aes(y=mean.doc)) +
+     xlab("") +
+     ylab(expression(paste("DOC (", mu, "mol ", l^{-1}, ")"))) +
+     scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+     theme_classic() +
+     theme(axis.line.x = element_line(color = "black"),
+         axis.line.y = element_line(color = "black"),
+         axis.text.y=element_text(angle=90, hjust=0.5))
+
+
+
+g.ba <-ggplot(adata[!is.na(adata$mean.ba),], aes(x=Date)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+    geom_point(aes(y=mean.ba), shape=20, na.rm=T, size=2) +    
+    geom_errorbar(aes(ymin=mean.ba-se.ba, ymax=mean.ba+se.ba), 
+                  width=.1) +
+    geom_line(aes(y=mean.ba)) + 
+    xlab("") + 
+    ylab(expression(paste("BA (cells ", ml^{-1}, ")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+  scale_y_continuous(breaks=c(5e5, 1e6),
+                     labels=c("5e5","1e6")) +
+    theme_classic() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+
+
+g.temp <-ggplot(meta[!is.na(meta$Temp),], aes(x=Date, y=Temp)) +
+  annotate("rect", 
+           xmin=exp1.min, xmax=exp1.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp2.min, xmax=exp2.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp3.min, xmax=exp3.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+  annotate("rect", 
+           xmin=exp4.min, xmax=exp4.max, 
+           ymin=-Inf,ymax=Inf, alpha = .1) +
+     geom_point(shape=20, na.rm=T, size=2) +    
+     geom_line() + 
+     xlab("") + 
+     ylab(expression(paste("Temperature (" *~degree* "C)"))) +
+     scale_x_date(date_breaks="1 month", 
+                     date_labels="%b",
+                 limits = c(min,max)) +
+    theme_classic() +
+     theme(axis.line.x = element_line(color = "black"), 
+         axis.line.y = element_line(color = "black"),
+         axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+multiplot(g.temp, g.nit, g.pho, g.sil, g.chla, g.doc, g.pc, g.pn,cols=2)
+
+```
+
+
+# LTER data
+
+```{r}
+
+chl <- read.delim("LTER_data/Chlorophyll.csv", sep=",")
+chl <- chl[-9538,]
+chl2 <- chl[which(chl$studyName=="PAL0304" |
+                  chl$studyName=="PAL0405" |
+                  chl$studyName=="PAL0506" |
+                  chl$studyName=="PAL0607" |
+                  chl$studyName=="PAL0708" |
+                  chl$studyName=="PAL0910" |
+                  chl$studyName=="PAL1011" |
+                  chl$studyName=="PAL1112"),]
+chl.b10 <- chl2[which(chl2$Station=="E" & chl2$Depth==0),]
+chl.b10[chl.b10 == -999] <- NA
+chl.b10$Date <- as.Date(as.POSIXct(chl.b10$Datetime.GMT, "%Y-%m-%d %h:%m:%s"),"%Y-%m-%d") 
+
+
+
+g.chl <- ggplot(chl.b10, aes(x=Date, y=Chlorophyll..mg.m..)) +
+    geom_point(shape=20, na.rm=T, size=2) +    
+    geom_line() + 
+    xlab("") + 
+    ylab(expression(paste("Chlorophyll ", italic("a"), "(", mu, "g  ", l^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%m") +
+    theme_bw() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+facet.chl <- g.chl + facet_grid(.~studyName, scales="free_x")
+
+
+doc <- read.delim("LTER_data/DOC.csv", sep=",")
+doc2 <- doc[which(doc$studyName=="PAL0304" |
+                  doc$studyName=="PAL0405" |
+                  doc$studyName=="PAL0506" |
+                  doc$studyName=="PAL0607" |
+                  doc$studyName=="PAL0708" |
+                  doc$studyName=="PAL0910" |
+                  doc$studyName=="PAL1011" |
+                  doc$studyName=="PAL1112"),]
+doc.b10 <- doc2[which(doc2$Station.Name=="E" & doc2$Depth==0),]
+doc.b10[doc.b10 == -999] <- NA
+doc.b10$Date <- as.Date(doc.b10$Date.GMT,"%Y-%m-%d") 
+
+
+g.doc <- ggplot(doc.b10, aes(x=Date, y=DOC..µmol.L.)) +
+    geom_point(shape=20, na.rm=T, size=1) +    
+    geom_line() + 
+    xlab("") + 
+    ylab(expression(paste("DOC (", mu, "mol  ", l^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%m") +
+    ylim(c(30,100)) +
+    theme_bw() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+facet.doc <- g.doc + facet_grid(.~studyName, scales="free_x")
+
+poc <- read.delim("LTER_data/Particulates.csv", sep=",")
+poc <- poc[-4898,]
+poc2 <- poc[which(poc$studyName=="PAL0304" |
+                  poc$studyName=="PAL0405" |
+                  poc$studyName=="PAL0506" |
+                  poc$studyName=="PAL0607" |
+                  poc$studyName=="PAL0708" |
+                  poc$studyName=="PAL0910" |
+                  poc$studyName=="PAL1011" |
+                  poc$studyName=="PAL1112"),]
+poc.b10 <- poc2[which(poc2$Station=="E" & poc2$Depth..m.==0),]
+poc.b10[poc.b10 == -999] <- NA
+poc.b10$Date <- as.Date(poc.b10$Datetime.GMT,"%Y-%m-%d") 
+
+
+g.poc <- ggplot(poc.b10, aes(x=Date, y=C..µg.l.)) +
+    geom_point(shape=20, na.rm=T, size=1) +    
+    geom_line() + 
+    xlab("") + 
+    ylab(expression(paste("POC (", mu, "g  ", l^{-1},")"))) +
+    scale_x_date(date_breaks="1 month", 
+                     date_labels="%m") +
+    ylim(c(0,2000)) +
+    theme_bw() +
+    theme(axis.line.x = element_line(color = "black"), 
+        axis.line.y = element_line(color = "black"),
+        axis.text.y=element_text(angle=90, hjust=0.5)) 
+
+facet.poc <- g.poc + facet_grid(.~studyName, scales="free_x")
+
+multiplot(facet.chl, facet.poc, facet.doc, cols=1)
+
+d <- merge(doc.b10, chl.b10, by.x = "Date", by.y = "Date", all.x=FALSE, 
+           all.y=FALSE)
+
+lm.doc.chl <- lm(DOC..µmol.L.~Chlorophyll..mg.m.., data=d)
+
+d2 <- merge(poc.b10, chl.b10, by.x = "Date", by.y = "Date", all.x=FALSE, all.y=FALSE)
+
+lm.poc.chl <- lm(C..µg.l.~Chlorophyll..mg.m.., data=d2)
+
+plot()
+
+
+```
+
+
+```{r}
+
+m_poc <- lm(C..µg.l.~Chlorophyll..mg.m.., data=d2)
+a_poc <- signif(coef(m_poc)[1], digits = 2)
+b_poc <- signif(coef(m_poc)[2], digits = 2)
+r_poc <- signif(summary(m_poc)$r.squared, digits=2)
+textlab_poc <- paste("y = ",b_poc,"x + ",a_poc, sep="")
+#print(textlab)
+textlab2_poc <- paste("R^2 = ",r_poc)
+#print(textlab2)
+p_poc <- signif(summary(m_poc)$coefficients["Chlorophyll..mg.m..","Pr(>|t|)"],digits=2)
+textlab3_poc <- paste("p =",p_poc)
+
+poc_vs_chl <- ggplot(d2, aes(x = Chlorophyll..mg.m.., y = C..µg.l.)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", se = FALSE) +
+    ylab(expression(paste("POC (", mu, "g  ", l^{-1},")"))) +
+    xlab(expression(paste("Chlorophyll ", italic("a"), " (", mu, "g  ", l^{-1},")"))) +
+ # annotate("text", x=50000, y = 5000, label="A") +
+  annotate("text", x = 2.5, y = 1750, label = textlab_poc, color="black", size = 3, parse=FALSE) +
+  annotate("text", x = 2.5, y = 1600, label = textlab2_poc, color="black", size = 3, parse=FALSE) +
+   annotate("text", x = 2.5, y = 1450, label = textlab3_poc, color="black", size = 3, parse=FALSE) +
+  theme_bw()
+
+m_doc <- lm.doc.chl <- lm(DOC..µmol.L.~Chlorophyll..mg.m.., data=d)
+a_doc <- signif(coef(m_doc)[1], digits = 2)
+b_doc <- signif(coef(m_doc)[2], digits = 2)
+r_doc <- signif(summary(m_doc)$r.squared, digits=2)
+textlab_doc <- paste("y = ",b_doc,"x + ",a_doc, sep="")
+#print(textlab)
+textlab2_doc <- paste("R^2 = ",r_doc)
+#print(textlab2)
+p_doc <- signif(summary(m_doc)$coefficients["Chlorophyll..mg.m..","Pr(>|t|)"],digits=2)
+textlab3_doc <- paste("p =",p_doc)
+ 
+
+doc_vs_chl <- ggplot(d, aes(x = Chlorophyll..mg.m.., y = DOC..µmol.L.)) +
+  geom_point(size = 1) +
+  geom_smooth(method = "lm", se = FALSE) +
+    ylab(expression(paste("DOC (", mu, "mol  ", l^{-1},")"))) +
+    xlab(expression(paste("Chlorophyll ", italic("a"), " (", mu, "g  ", l^{-1},")"))) +
+ # annotate("text", x=50000, y = 5000, label="A") +
+  annotate("text", x = 18, y = 100, label = textlab_doc, color="black", size = 3, parse=FALSE) +
+  annotate("text", x = 18, y = 93, label = textlab2_doc, color="black", size = 3, parse=FALSE) +
+   annotate("text", x = 18, y = 86, label = textlab3_doc, color="black", size = 3, parse=FALSE) +
+  theme_bw()
+
+
+
+panel.poc <- ggplot_gtable(ggplot_build(poc_vs_chl))
+panel.doc <- ggplot_gtable(ggplot_build(doc_vs_chl))
+
+
+maxWidth = grid::unit.pmax(panel.poc$widths[2:3], panel.doc$widths[2:3])
+ 
+panel.poc$widths[2:3] <- maxWidth
+panel.doc$widths[2:3] <- maxWidth
+
+grid.arrange(panel.poc, panel.doc, heights = c(2,2))
+
+```
+
+# New taxa plot
+
+
+```{r taxa_plot_for_defense}
+
+tdt <- function(inpdt){
+  transposed <- t(inpdt[,-1,with=F]);
+  colnames(transposed) <- inpdt[[1]];
+  transposed <- data.table(transposed, keep.rownames=T);
+  setnames(transposed, 1, names(inpdt)[1]);
+  return(transposed);
+}
+
+# read in the taxa table and order by sample number
+taxaL6 <- fread("cdout_DOM_bac/taxa_plots/table_mc64271_sorted_L6.txt", skip=1)
+taxaL6.transpose <- tdt(taxaL6)
+idx_taxa <- order(taxaL6.transpose$'#OTU ID', decreasing=FALSE)
+taxa_sorted <- taxaL6.transpose[idx_taxa]
+
+# convert to data frame and transpose again
+taxa_sorted.df <- as.data.frame(taxa_sorted)
+taxa_t <- t(taxa_sorted.df[,-1])
+colnames(taxa_t) <- taxa_sorted.df[,1]
+
+# get row means
+taxa_t <- as.data.frame(taxa_t)
+
+myselection <- data.frame(idx=1:1060)
+myselection$name <- 'Other'
+myselection$name[5:29] <- 'p__Acidobacteria'
+myselection$name[30:40] <- 'p__Actinobacteria;c__Acidimicrobiia;o__Acidimicrobiales'
+myselection$name[41:111] <- 'p__Actinobacteria;c__Actinobacteria;o__Actinomycetales'
+myselection$name[112:128] <- 'p__Actinobacteria (Other)'
+myselection$name[134:160] <- 'p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales'
+myselection$name[c(161:176,185:188)] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales (Other)'
+myselection$name[177:184] <- 'p__Bacteroidetes;c__Cytophagia;o__Cytophagales;f__Flammeovirgaceae'
+myselection$name[c(189,190,225:231,198:204,206:216,218:223,205)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales (Other)'
+myselection$name[191:197] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Cryomorphaceae'
+#myselection$name[c(198:204,206:216,218:223)] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae (Other)'
+myselection$name[217] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Polaribacter'
+#myselection$name[205] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__Flavobacteriaceae;g__Flavobacterium'
+myselection$name[224] <- 'p__Bacteroidetes;c__Flavobacteriia;o__Flavobacteriales;f__NS9'
+myselection$name[c(131:133,232:257)] <- 'p__Bacteroidetes (Other)'
+myselection$name[274:293] <- 'p__Chloroflexi'
+myselection$name[327:447] <- 'p__Firmicutes'
+myselection$name[448:453] <- 'p__Fusobacteria'
+myselection$name[491:499] <- 'p__Nitrospirae'
+myselection$name[518:545] <- 'p__Planctomycetes'
+myselection$name[548:592] <- 'p__Proteobacteria;c__Alphaproteobacteria (Other)'
+myselection$name[593:610] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodobacterales;f__Rhodobacteraceae'
+myselection$name[611:620] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rhodospirillales'
+myselection$name[622] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales;f__Pelagibacteraceae'
+myselection$name[c(621,623:625)] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Rickettsiales (Other)'
+myselection$name[627:641] <- 'p__Proteobacteria;c__Alphaproteobacteria;o__Sphingomonadales'
+myselection$name[644:666] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales'
+myselection$name[673:675] <- 'p__Proteobacteria;c__Betaproteobacteria;o__Neisseriales'
+myselection$name[c(687:695,714:743,745:748,750:755)] <- 'p__Proteobacteria;c__Deltaproteobacteria'
+myselection$name[696:712] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales (Other)'
+myselection$name[c(744,749)] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__SAR324'
+myselection$name[713] <- 'p__Proteobacteria;c__Deltaproteobacteria;o__Desulfobacterales;f__Nitrospinaceae;g__Nitrospina'
+myselection$name[c(930:944,884:903,767:774,799,814:841,845:862)] <- 'p__Proteobacteria;c__Gammaproteobacteria (Other)'
+myselection$name[c(775:794,802:807,809:813)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales (Other)'
+myselection$name[795:798] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Colwelliaceae'
+myselection$name[808] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Alteromonadales;f__Psychromonadaceae;g__Psychromonas'
+myselection$name[c(800,801,842:844)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__HTCC2188'
+myselection$name[c(863:868,874:883, 869:873)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales'
+#myselection$name[c(863:868,874:883)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales (Other)' # combine with Halamonadaceae above
+#myselection$name[869:873] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Oceanospirillales;f__Halomonadaceae' # combine with Oceanospirillales above
+myselection$name[c(904:905,911:919)] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales (Other)'
+myselection$name[906:910] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Thiotrichales;f__Piscirickettsiaceae'
+myselection$name[920:929] <- 'p__Proteobacteria;c__Gammaproteobacteria;o__Vibrionales'
+myselection$name[949:962] <- 'p__SAR406'
+myselection$name[978:984] <- 'p__TM6'
+myselection$name[965:977] <- 'p__Spirochaetes'
+myselection$name[985:989] <- 'p__TM7'
+myselection$name[990:1000] <- 'p__Tenericutes'
+myselection$name[1003:1045] <- 'p__Verrucomicrobia'
+
+taxa_t$mygrp <- myselection$name
+
+agg1 <- by(taxa_t, taxa_t$mygrp, function(x) colSums(x[,1:81]))
+agg2 <- do.call(rbind,as.list(agg1))
+agg2 <- data.frame(cbind(agg2,avg=rowSums(agg2)/NCOL(agg2)))
+
+# apply index to table to sort according to average relative abundance
+idx <- order(agg2$avg, decreasing = TRUE)
+agg2_sorted <- agg2[idx, ]
+
+
+Other <- colSums(agg2_sorted[c(5,7:45),(1:81)])
+
+#transpose yet again, rename rows, keep only top 11 taxa and add Other column
+agg2_sorted_t <- t(agg2_sorted[,-(82)])
+#rownames(agg2_sorted_t) <- meta_sorted$Month
+agg2_sorted_t_other<-agg2_sorted_t[,c(2,3,4,1,6)]
+agg2_sorted_t_other <- cbind(agg2_sorted_t_other, Other)
+#convert data to long format for stacked bar plot
+
+taxa.all <- agg2_sorted_t_other[-c(40:42,55:57,61:64),]
+
+topotu.t.meta.all <- data.frame(meta_sorted.all$LibraryID, meta_sorted.all$Month, meta_sorted.all$Day, meta_sorted.all$Treatment, taxa.all)
+colnames(topotu.t.meta.all)[1] <- "LibraryID"
+colnames(topotu.t.meta.all)[2] <- "Month"
+colnames(topotu.t.meta.all)[3] <- "Day"
+colnames(topotu.t.meta.all)[4] <- "Treatment"
+
+
+topotu.t.meta.all[topotu.t.meta.all == "f2"] <- "Control"
+
+otumelt.all <- melt(topotu.t.meta.all, id.vars=(c("LibraryID", "Month", "Day","Treatment")))
+colnames(otumelt.all) <- c("LibraryID", "Month","Day","Treatment", "OTU", "Abundance")
+
+tdata.all <- ddply(otumelt.all, c("Month", "Day", "Treatment", "OTU"), summarise,
+                           N = length(Abundance),
+                           mean = mean(Abundance),
+                           sd   = sd(Abundance),
+                           se   = sd / sqrt(N)
+)
+
+tdata.all$Day <- as.factor(tdata.all$Day)
+tdata.all$Month = factor(tdata.all$Month,
+                         levels=c("August", "September", 
+                                  "October", "December"))
+
+levels(tdata.all$Day) <- c("Day 0", "Day 6", "Day 10")
+
+day_labeller <- function(var, value){
+  value <- Day
+  if (var=="Day") { 
+    value[value=="0"] <- "Day 0"
+    value[value=="6"]   <- "Day 6"
+    value[value=="10"]   <- "Day 10"
+  }
+  return(value)
+}
+
+
+p.all <- ggplot(data = tdata.all, aes(x = Treatment, y = mean, fill = OTU)) + 
+  geom_bar(stat="identity") +
+  scale_fill_manual(name="Top 5\nOperational\nTaxonomic Units",
+                      values=c("#FF9999","#CC3333","#99CCFF",
+                               "#0066CC","#990099", "#999999"),
+                      labels=c("Collwelliaceae",
+                                expression(paste(italic("Polaribacter"))),
+                               "Rhodobacteraceae",
+                               "Pelagibacteraceae",
+                               "Oceanospirillales",
+                                "Other"),
+                    guide = guide_legend(reverse=TRUE)) +
+  ylab("Relative abundance") +
+  #ggtitle("August") +
+  xlab("") +
+  theme_bw() +
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+p.all + facet_grid(Month~Day)
+
+p.all <- ggplot(data = tdata.all, aes(x = Treatment, y = mean, fill = OTU)) + 
+  geom_bar(stat="identity") +
+  scale_fill_manual(name="Top 5\nOperational\nTaxonomic Units",
+                      values=c("#FF9999","#CC3333","#99CCFF",
+                               "#0066CC","#990099", "#999999"),
+                      labels=c("Collwelliaceae",
+                                expression(paste(italic("Polaribacter"))),
+                               "Rhodobacteraceae",
+                               "Pelagibacteraceae",
+                               "Oceanospirillales",
+                                "Other"),
+                    guide = guide_legend(reverse=TRUE)) +
+  ylab("Relative abundance") +
+  #ggtitle("August") +
+  xlab("") +
+  theme_bw() +
+  theme(text = element_text(size=10),
+        axis.text.x = element_text(vjust=1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank())
+
+p.all + facet_grid(Month~Day)
+
+
+```
